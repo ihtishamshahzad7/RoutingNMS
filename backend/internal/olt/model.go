@@ -29,6 +29,7 @@ type PONPort struct {
 	Status Status `json:"status"`
 	ONUCount int `json:"onuCount"`
 	ONUs []ONU `json:"onus,omitempty"`
+	LastSeen *time.Time `json:"lastSeen,omitempty"`
 }
 
 type ONU struct {
