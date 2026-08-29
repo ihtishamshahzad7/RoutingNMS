@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/ihtishamshzad7/RoutingNMS/backend/internal/snmp"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/snmp"
 )
 
 type ConfigService struct { DB *pgxpool.Pool; Profiles *ProfileRegistry }
