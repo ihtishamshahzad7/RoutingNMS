@@ -13,13 +13,13 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/olt"
 )
 
 type healthResponse struct { Status string `json:"status"`; Service string `json:"service"`; Version string `json:"version"` }
 
 func main() {
 	port := os.Getenv("APP_PORT"); if port == "" { port = "8080" }
-
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM); defer stop()
 	var db *pgxpool.Pool
 	if dsn := strings.TrimSpace(os.Getenv("DATABASE_URL")); dsn != "" {
@@ -31,6 +31,15 @@ func main() {
 		defer db.Close(); log.Printf("PostgreSQL connection ready")
 	} else { log.Printf("DATABASE_URL is not set; starting API without database") }
 
+	var oltRuntime *olt.RuntimeManager
+	if db != nil {
+		profiles := olt.DefaultProfileRegistry()
+		config := olt.ConfigService{DB: db, Profiles: profiles}
+		oltRuntime = olt.NewRuntimeManager(config, olt.Repository{DB: db})
+		if err := oltRuntime.Start(ctx); err != nil { log.Printf("OLT runtime initialization failed: %v", err) }
+		log.Printf("OLT runtime manager started; active pollers=%d", oltRuntime.Running())
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, r *http.Request) { w.Header().Set("Content-Type","application/json"); _=json.NewEncoder(w).Encode(healthResponse{"ok","routingnms-api","0.1.0"}) })
 	mux.HandleFunc("GET /api/v1/ready", func(w http.ResponseWriter, r *http.Request) {
@@ -38,10 +47,15 @@ func main() {
 		if db != nil { if err := db.Ping(r.Context()); err != nil { status="not_ready"; code=http.StatusServiceUnavailable } }
 		w.Header().Set("Content-Type","application/json"); w.WriteHeader(code); _=json.NewEncoder(w).Encode(map[string]string{"status":status})
 	})
+	mux.HandleFunc("GET /api/v1/olt/runtime", func(w http.ResponseWriter, r *http.Request) {
+		count := 0; if oltRuntime != nil { count = oltRuntime.Running() }
+		w.Header().Set("Content-Type","application/json"); _=json.NewEncoder(w).Encode(map[string]any{"running":count})
+	})
 
 	srv := &http.Server{Addr:":"+port, Handler:securityHeaders(mux), ReadHeaderTimeout:5*time.Second, ReadTimeout:15*time.Second, WriteTimeout:15*time.Second, IdleTimeout:60*time.Second}
 	go func(){ log.Printf("RoutingNMS API listening on :%s",port); if err:=srv.ListenAndServe(); err!=nil && err!=http.ErrServerClosed { log.Fatal(err) } }()
 	<-ctx.Done()
+	if oltRuntime != nil { oltRuntime.Stop() }
 	shutdownCtx,cancel:=context.WithTimeout(context.Background(),10*time.Second); defer cancel(); _=srv.Shutdown(shutdownCtx)
 }
 
