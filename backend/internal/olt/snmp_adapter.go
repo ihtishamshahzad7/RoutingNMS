@@ -19,6 +19,11 @@ type OIDMapping struct {
 	PONIndex ONUIndexSpec
 }
 
+// Valid reports whether the minimum discovery mapping required by the adapter exists.
+func (m OIDMapping) Valid() bool {
+	return strings.TrimSpace(m.PONName) != "" && strings.TrimSpace(m.ONUSerial) != "" && m.ONUIndex.Valid() && m.PONIndex.Valid()
+}
+
 func (a *SNMPAdapter) Discover(ctx context.Context, olt OLT) ([]PONPort, error) {
 	if a.Mapping.PONName == "" { return nil, fmt.Errorf("PON OID mapping is not configured") }
 	values, err := a.Collector.Walk(ctx, a.targetFor(olt), a.Mapping.PONName)
