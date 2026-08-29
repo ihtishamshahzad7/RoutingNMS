@@ -4,9 +4,13 @@ import "strings"
 
 // OIDMapping contains the normalized OIDs used by an OLT vendor profile.
 type OIDMapping struct {
-	PONName   string
-	ONUSerial string
-	ONUIndex  ONUIndexSpec
+	PONName       string
+	ONUSerial     string
+	ONUIndex      ONUIndexSpec
+	ONUStatusOID  OIDTemplate
+	ONULOSOID     OIDTemplate
+	ONURXPowerOID OIDTemplate
+	ONUTXPowerOID OIDTemplate
 }
 
 // Valid reports whether the minimum discovery mapping is usable.
