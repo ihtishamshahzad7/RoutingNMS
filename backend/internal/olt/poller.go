@@ -6,9 +6,8 @@ import (
 	"time"
 )
 
-// Poller periodically refreshes OLT topology through the vendor-neutral
-// adapter contract. One ONU polling failure does not discard the other ONU
-// results from the same cycle.
+// Poller periodically refreshes OLT topology and persists each successful
+// cycle through OnResult. Discovery is isolated behind the vendor adapter.
 type Poller struct {
 	Adapter Adapter
 	OLT OLT
