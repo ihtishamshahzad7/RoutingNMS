@@ -48,8 +48,9 @@ func main() {
 		w.Header().Set("Content-Type","application/json"); w.WriteHeader(code); _=json.NewEncoder(w).Encode(map[string]string{"status":status})
 	})
 	mux.HandleFunc("GET /api/v1/olt/runtime", func(w http.ResponseWriter, r *http.Request) {
-		count := 0; if oltRuntime != nil { count = oltRuntime.Running() }
-		w.Header().Set("Content-Type","application/json"); _=json.NewEncoder(w).Encode(map[string]any{"running":count})
+		states := []olt.RuntimeState{}
+		if oltRuntime != nil { states = oltRuntime.States() }
+		w.Header().Set("Content-Type","application/json"); _=json.NewEncoder(w).Encode(map[string]any{"running":len(states),"olts":states})
 	})
 
 	srv := &http.Server{Addr:":"+port, Handler:securityHeaders(mux), ReadHeaderTimeout:5*time.Second, ReadTimeout:15*time.Second, WriteTimeout:15*time.Second, IdleTimeout:60*time.Second}
