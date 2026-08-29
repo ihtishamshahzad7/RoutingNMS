@@ -23,12 +23,13 @@ func (a *SNMPAdapter) Discover(ctx context.Context, olt OLT) ([]PONPort, error) 
 	if a.Mapping.PONName == "" { return nil, fmt.Errorf("PON OID mapping is not configured") }
 	values, err := a.Collector.Walk(ctx, a.targetFor(olt), a.Mapping.PONName)
 	if err != nil { return nil, fmt.Errorf("walk PON names: %w", err) }
+	now := time.Now().UTC()
 	pons := make([]PONPort, 0, len(values))
 	for i, v := range values {
 		idx := onuIndex(v.OID, a.Mapping.PONName)
 		port := i + 1
 		if n, ok := parseIndexNumber(idx); ok { port = n }
-		pons = append(pons, PONPort{ID:v.OID, OLTID:olt.ID, Name:fmt.Sprint(v.Value), Index:port, Port:port, Type:"pon", Status:Unknown})
+		pons = append(pons, PONPort{ID:v.OID, OLTID:olt.ID, Name:fmt.Sprint(v.Value), Index:port, Port:port, Type:"pon", Status:Unknown, LastSeen:&now})
 	}
 	return pons,nil
 }
