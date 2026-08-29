@@ -16,6 +16,7 @@ type OIDMapping struct {
 	PONName, PONStatus, ONUSerial, ONUStatus, ONULOS, ONURXPower, ONUTXPower string
 	ONUStatusOID, ONULOSOID, ONURXPowerOID, ONUTXPowerOID OIDTemplate
 	ONUIndex ONUIndexSpec
+	PONIndex ONUIndexSpec
 }
 
 func (a *SNMPAdapter) Discover(ctx context.Context, olt OLT) ([]PONPort, error) {
@@ -23,19 +24,28 @@ func (a *SNMPAdapter) Discover(ctx context.Context, olt OLT) ([]PONPort, error) 
 	values, err := a.Collector.Walk(ctx, a.targetFor(olt), a.Mapping.PONName)
 	if err != nil { return nil, fmt.Errorf("walk PON names: %w", err) }
 	pons := make([]PONPort, 0, len(values))
-	for i, v := range values { pons = append(pons, PONPort{ID:v.OID, OLTID:olt.ID, Name:fmt.Sprint(v.Value), Index:i+1, Type:"pon", Status:Unknown}) }
+	for i, v := range values {
+		idx := onuIndex(v.OID, a.Mapping.PONName)
+		port := i + 1
+		if n, ok := parseIndexNumber(idx); ok { port = n }
+		pons = append(pons, PONPort{ID:v.OID, OLTID:olt.ID, Name:fmt.Sprint(v.Value), Index:port, Port:port, Type:"pon", Status:Unknown})
+	}
 	return pons,nil
 }
 
 func (a *SNMPAdapter) DiscoverONUs(ctx context.Context, olt OLT, port PONPort) ([]ONU,error) {
 	if a.Mapping.ONUSerial=="" { return nil,fmt.Errorf("ONU serial OID mapping is not configured") }
 	if !a.Mapping.ONUIndex.Valid() { return nil,fmt.Errorf("ONU index mapping is not configured") }
+	if !a.Mapping.PONIndex.Valid() { return nil,fmt.Errorf("PON index mapping is not configured") }
 	values,err:=a.Collector.Walk(ctx,a.targetFor(olt),a.Mapping.ONUSerial)
 	if err!=nil{return nil,fmt.Errorf("walk ONU serials on %s: %w",port.Name,err)}
+	ponsIndex:=onuIndex(port.ID,a.Mapping.PONName)
+	if ponsIndex==""{return nil,fmt.Errorf("cannot derive PON table index from %q",port.ID)}
 	onus:=make([]ONU,0)
 	for _,v:=range values {
-		parent,_,err:=a.Mapping.ONUIndex.Extract(onuIndex(v.OID,a.Mapping.ONUSerial));if err!=nil{return nil,err}
-		if parent!=strconv.Itoa(port.Index){continue}
+		idx:=onuIndex(v.OID,a.Mapping.ONUSerial)
+		parent,_,err:=a.Mapping.ONUIndex.Extract(idx);if err!=nil{return nil,err}
+		if !sameIndex(parent,ponsIndex){continue}
 		onus=append(onus,ONU{ID:v.OID,OLTID:olt.ID,PONPortID:port.ID,Serial:strings.TrimSpace(fmt.Sprint(v.Value)),Status:Unknown})
 	}
 	return onus,nil
@@ -57,6 +67,8 @@ func (a *SNMPAdapter) PollONU(ctx context.Context, olt OLT, onu ONU)(ONU,error){
 func (a *SNMPAdapter) targetFor(olt OLT) snmp.Target { t:=a.Target;if strings.TrimSpace(olt.Address)!=""{t.Address=olt.Address};return t }
 func (a *SNMPAdapter) pollIndexed(ctx context.Context, olt OLT, onu ONU, oids []string)([]snmp.Value,error){return a.Collector.Get(ctx,a.targetFor(olt),oids)}
 func onuIndex(id,base string)string{id=strings.Trim(id,".");base=strings.TrimRight(strings.Trim(base),".");if base!=""{prefix:=strings.Trim(base,".")+".";if strings.HasPrefix(id,prefix){return strings.TrimPrefix(id,prefix)}};return ""}
+func parseIndexNumber(index string)(int,bool){parts:=strings.Split(strings.Trim(index,"."),".");if len(parts)==0{return 0,false};n,e:=strconv.Atoi(parts[len(parts)-1]);return n,e==nil}
+func sameIndex(a,b string)bool{a=strings.Trim(a,".");b=strings.Trim(b,".");return a!=""&&b!=""&&(a==b||strings.TrimPrefix(a,"0")==strings.TrimPrefix(b,"0"))}
 func parseFloat(v any)(float64,bool){switch x:=v.(type){case float64:return x,true;case float32:return float64(x),true;case int:return float64(x),true;case int64:return float64(x),true;case uint64:return float64(x),true;case string:n,e:=strconv.ParseFloat(strings.TrimSpace(x),64);return n,e==nil};return 0,false}
 func parseBool(v any)bool{switch x:=v.(type){case bool:return x;case int:return x!=0;case int64:return x!=0;case uint64:return x!=0;case string:s:=strings.ToLower(strings.TrimSpace(x));return s=="1"||s=="true"||s=="yes"||s=="on"||s=="los"};return false}
 func parseStatus(v any)Status{if n,ok:=parseFloat(v);ok{if n==1{return Online};if n==2||n==3||n==0{return Offline}};s:=strings.ToLower(strings.TrimSpace(fmt.Sprint(v)));if strings.Contains(s,"online")||strings.Contains(s,"up"){return Online};if strings.Contains(s,"offline")||strings.Contains(s,"down"){return Offline};return Unknown}
