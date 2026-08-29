@@ -52,6 +52,11 @@ func main() {
 		if oltRuntime != nil { states = oltRuntime.States(); running = oltRuntime.Running() }
 		w.Header().Set("Content-Type","application/json"); _=json.NewEncoder(w).Encode(map[string]any{"running":running,"olts":states})
 	})
+	mux.Handle("GET /api/v1/olts/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimRight(r.URL.Path, "/")
+		if strings.HasSuffix(path, "/alerts") { (olt.AlertAPI{DB: db}).ServeHTTP(w,r); return }
+		http.NotFound(w,r)
+	}))
 
 	srv := &http.Server{Addr:":"+port, Handler:securityHeaders(mux), ReadHeaderTimeout:5*time.Second, ReadTimeout:15*time.Second, WriteTimeout:15*time.Second, IdleTimeout:60*time.Second}
 	go func(){ log.Printf("RoutingNMS API listening on :%s",port); if err:=srv.ListenAndServe(); err!=nil && err!=http.ErrServerClosed { log.Fatal(err) } }()
