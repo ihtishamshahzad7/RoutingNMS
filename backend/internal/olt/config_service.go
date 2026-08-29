@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/snmp"
+	"github.com/ihtishamshzad7/RoutingNMS/backend/internal/snmp"
 )
 
 type ConfigService struct { DB *pgxpool.Pool; Profiles *ProfileRegistry }
@@ -29,12 +29,4 @@ func (s ConfigService) LoadEnabled(ctx context.Context) ([]ConfiguredOLT,error) 
 		out=append(out,ConfiguredOLT{OLT:o,SNMP:t,Profile:profile,PollInterval:time.Duration(pollSeconds)*time.Second})
 	}
 	if err:=rows.Err();err!=nil{return nil,err};return out,nil
-}
-
-// AdapterFor builds an OLT adapter from the existing transport collector.
-func (s ConfigService) AdapterFor(cfg ConfiguredOLT) (Adapter,error) {
-	if strings.TrimSpace(cfg.OLT.ID)=="" { return nil,fmt.Errorf("OLT id is required") }
-	if err:=cfg.SNMP.Validate(); err!=nil { return nil,fmt.Errorf("invalid SNMP target for OLT %s: %w",cfg.OLT.ID,err) }
-	if !cfg.Profile.Mapping.Valid() { return nil,fmt.Errorf("OLT profile %q has no valid OID mapping",cfg.Profile.Name) }
-	return &SNMPAdapter{Target:cfg.SNMP,Mapping:cfg.Profile.Mapping,Collector:snmp.Collector{}},nil
 }
