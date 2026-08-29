@@ -24,9 +24,11 @@ type PONPort struct {
 	OLTID string `json:"oltId"`
 	Name string `json:"name"`
 	Index int `json:"index"`
+	Port int `json:"port,omitempty"`
 	Type string `json:"type"`
 	Status Status `json:"status"`
 	ONUCount int `json:"onuCount"`
+	ONUs []ONU `json:"onus,omitempty"`
 }
 
 type ONU struct {
