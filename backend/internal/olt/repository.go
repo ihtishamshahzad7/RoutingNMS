@@ -9,9 +9,9 @@ import (
 
 type Repository struct { DB *pgxpool.Pool }
 
-func (r Repository) UpsertPON(ctx context.Context, oltID string, p PON) error {
+func (r Repository) UpsertPON(ctx context.Context, oltID string, p PONPort) error {
 	if r.DB == nil { return fmt.Errorf("database is not initialized") }
-	_, err := r.DB.Exec(ctx, `INSERT INTO olt_pons (id,olt_id,name,status,onu_count) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name,status=EXCLUDED.status,onu_count=EXCLUDED.onu_count`, p.ID, oltID, p.ID, p.Status, len(p.ONUs))
+	_, err := r.DB.Exec(ctx, `INSERT INTO olt_pons (id,olt_id,name,status,onu_count) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name,status=EXCLUDED.status,onu_count=EXCLUDED.onu_count`, p.ID, oltID, p.Name, p.Status, p.ONUCount)
 	return err
 }
 
@@ -24,7 +24,7 @@ func (r Repository) UpsertONU(ctx context.Context, oltID string, ponID string, o
 func (r Repository) SavePollResult(ctx context.Context, oltID string, result PollResult) error {
 	if r.DB == nil { return fmt.Errorf("database is not initialized") }
 	for _, p := range result.PONs {
-		if err := r.UpsertPON(ctx, oltID, PON{ID:p.ID, Port:p.Port, Status:p.Status, ONUs:p.ONUs}); err != nil { return err }
+		if err := r.UpsertPON(ctx, oltID, p); err != nil { return err }
 	}
 	for _, o := range result.ONUs {
 		if err := r.UpsertONU(ctx, oltID, o.PONPortID, o); err != nil { return err }
