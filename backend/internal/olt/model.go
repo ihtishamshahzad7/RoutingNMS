@@ -48,11 +48,3 @@ type PollResult struct {
 	ONUs []ONU `json:"onus"`
 	PolledAt time.Time `json:"polledAt"`
 }
-
-// Adapter is the vendor-neutral contract for Huawei, ZTE, FiberHome, etc.
-// Implementations may use SNMP, SSH/CLI, or a vendor API internally.
-type Adapter interface {
-	DiscoverPONs() ([]PONPort, error)
-	DiscoverONUs(pon PONPort) ([]ONU, error)
-	PollONU(onu ONU) (ONU, error)
-}
