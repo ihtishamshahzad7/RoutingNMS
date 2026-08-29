@@ -24,17 +24,17 @@ func (s ConfigService) LoadEnabled(ctx context.Context) ([]ConfiguredOLT,error) 
 		profile,ok:=s.Profiles.ResolveProfile(o.Vendor,o.Model);if !ok{return nil,fmt.Errorf("no OLT profile for vendor=%q model=%q",o.Vendor,o.Model)}
 		if strings.TrimSpace(profileName)!=""&&!strings.EqualFold(profileName,profile.Name){return nil,fmt.Errorf("OLT %s requests unknown profile %q",o.ID,profileName)}
 		if pollSeconds<30{return nil,fmt.Errorf("OLT %s poll interval must be at least 30 seconds",o.ID)}
-		t:=snmp.Target{ID:o.ID,Address:o.Address,Port:snmp.DefaultPort,Timeout:snmp.DefaultTimeout,Retries:snmp.DefaultRetries,Credentials:snmp.Credentials{Version:snmp.Version(version),Community:community,Username:username,AuthProto:authProto,AuthPass:authPass,PrivProto:privProto,PrivPass:privPass}}.Normalize()
+		t:=snmp.Target{Address:o.Address,Port:snmp.DefaultPort,Timeout:snmp.DefaultTimeout,Retries:snmp.DefaultRetries,Credentials:snmp.Credentials{Version:snmp.Version(version),Community:community,Username:username,AuthProto:authProto,AuthPass:authPass,PrivProto:privProto,PrivPass:privPass}}.Normalize()
 		if err:=t.Validate();err!=nil{return nil,fmt.Errorf("OLT %s: %w",o.ID,err)}
 		out=append(out,ConfiguredOLT{OLT:o,SNMP:t,Profile:profile,PollInterval:time.Duration(pollSeconds)*time.Second})
 	}
 	if err:=rows.Err();err!=nil{return nil,err};return out,nil
 }
 
-// AdapterFor constructs the configured SNMP adapter for an OLT.
+// AdapterFor builds an OLT adapter from the existing transport collector.
 func (s ConfigService) AdapterFor(cfg ConfiguredOLT) (Adapter,error) {
 	if strings.TrimSpace(cfg.OLT.ID)=="" { return nil,fmt.Errorf("OLT id is required") }
 	if err:=cfg.SNMP.Validate(); err!=nil { return nil,fmt.Errorf("invalid SNMP target for OLT %s: %w",cfg.OLT.ID,err) }
 	if !cfg.Profile.Mapping.Valid() { return nil,fmt.Errorf("OLT profile %q has no valid OID mapping",cfg.Profile.Name) }
-	return &SNMPAdapter{Target:cfg.SNMP,Mapping:cfg.Profile.Mapping,Collector:snmp.NewCollector()},nil
+	return &SNMPAdapter{Target:cfg.SNMP,Mapping:cfg.Profile.Mapping,Collector:snmp.Collector{}},nil
 }
