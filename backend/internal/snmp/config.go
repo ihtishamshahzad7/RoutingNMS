@@ -11,13 +11,13 @@ const (
 )
 
 type Credentials struct {
-	Version   Version
-	Community string
-	Username  string
-	AuthProtocol string
-	AuthPassword string
-	PrivProtocol string
-	PrivPassword string
+	Version    Version
+	Community  string
+	Username   string
+	AuthProto  string
+	AuthPass   string
+	PrivProto  string
+	PrivPass   string
 }
 
 type Target struct {
