@@ -28,10 +28,18 @@ func (r *ProfileRegistry) Match(vendor, model string) (VendorProfile, bool) {
 	return VendorProfile{}, false
 }
 
-// Profiles are intentionally templates. Populate exact OIDs from the target
-// OLT's supported MIB/firmware before enabling a profile in production.
+// Profiles are intentionally templates. Exact OIDs must be supplied from the
+// target OLT's supported MIB/firmware before production polling is enabled.
 var DefaultProfiles = []VendorProfile{
 	{Name:"ZTE SNMP", Vendor:"zte"},
 	{Name:"Huawei SNMP", Vendor:"huawei"},
 	{Name:"FiberHome SNMP", Vendor:"fiberhome"},
+}
+
+func DefaultProfileRegistry() *ProfileRegistry { return NewProfileRegistry(DefaultProfiles...) }
+
+func (r *ProfileRegistry) Resolve(vendor, model string) (OIDMapping, bool) {
+	p, ok := r.Match(vendor, model)
+	if !ok { return OIDMapping{}, false }
+	return p.Mapping, true
 }
