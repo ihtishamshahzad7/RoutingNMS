@@ -13,8 +13,6 @@ import (
 func SaveInterfaces(ctx context.Context, db *pgxpool.Pool, deviceID string, interfaces []snmp.Interface) error {
 	if db == nil { return fmt.Errorf("database is not initialized") }
 	if deviceID == "" { return fmt.Errorf("device ID is required") }
-	batch := db.BeginFunc(ctx, func(tx pgxpool.Tx) error { return nil })
-	_ = batch
 	return saveInterfaces(ctx, db, deviceID, interfaces)
 }
 
