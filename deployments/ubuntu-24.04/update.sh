@@ -37,6 +37,17 @@ if [[ -f "$APP_DIR/frontend/package.json" ]]; then
   npm run build
 fi
 
+log "Applying PostgreSQL migrations"
+if [[ -d "$APP_DIR/backend/migrations" ]]; then
+  shopt -s nullglob
+  migrations=("$APP_DIR/backend/migrations"/*.sql)
+  for migration in "${migrations[@]}"; do
+    log "Applying $(basename "$migration")"
+    sudo -u postgres psql -d routingnms -v ON_ERROR_STOP=1 -f "$migration"
+  done
+  sudo -u postgres psql -d routingnms -v ON_ERROR_STOP=1 -c "GRANT USAGE ON SCHEMA public TO ${APP_USER}; GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO ${APP_USER}; GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO ${APP_USER}; ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO ${APP_USER}; ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO ${APP_USER};"
+fi
+
 log "Installing current systemd and Nginx configuration"
 install -m 0644 "$APP_DIR/deployments/ubuntu-24.04/routingnms-api.service" /etc/systemd/system/routingnms-api.service
 install -m 0644 "$APP_DIR/deployments/ubuntu-24.04/routingnms-web.service" /etc/systemd/system/routingnms-web.service
@@ -59,5 +70,8 @@ ASSET_PATH="$(curl -fsS http://127.0.0.1:${WEB_PORT}/ | grep -oE '/_next/static/
 [[ -n "$ASSET_PATH" ]] || fail "Could not find a CSS/JS asset in the Next.js HTML."
 curl -fsSI "http://127.0.0.1${ASSET_PATH}" | head -n 12
 
+SERVER_IP="$(hostname -I | awk '{print $1}')"
+[[ -n "$SERVER_IP" ]] || SERVER_IP="SERVER-IP"
+
 log "RoutingNMS update completed successfully"
-printf '\nVersion commit: %s\nWeb: http://SERVER-IP/\n\n' "$GIT_NEW"
+printf '\nVersion commit: %s\nLogin: http://%s/\nDashboard: http://%s/dashboard\nDefault username: admin\nDefault password: admin123\n\n' "$GIT_NEW" "$SERVER_IP" "$SERVER_IP" 
