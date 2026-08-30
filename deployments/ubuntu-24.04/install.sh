@@ -17,8 +17,6 @@ fail(){ echo "ERROR: $*" >&2; exit 1; }
 [[ -r /etc/os-release ]] || fail "Cannot detect Ubuntu release: /etc/os-release is missing."
 . /etc/os-release
 
-# Point releases such as Ubuntu 22.04.4 are represented by VERSION_ID=22.04.
-# Therefore compatibility must be checked by the LTS series, not PRETTY_NAME.
 if [[ "${ID:-}" != "ubuntu" ]]; then
   fail "RoutingNMS requires Ubuntu; detected ${PRETTY_NAME:-unknown}."
 fi
@@ -79,8 +77,11 @@ else
 fi
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 
+log "Synchronizing Go dependencies"
+sudo -u "$APP_USER" env HOME="$APP_DIR" PATH="/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin" bash -c 'cd /opt/routingnms/backend && go mod tidy && go mod download && go mod verify'
+
 log "Building backend"
-sudo -u "$APP_USER" env HOME="$APP_DIR" PATH="/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin" bash -c 'cd /opt/routingnms/backend && go mod download && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /opt/routingnms/routingnms-api ./cmd/api'
+sudo -u "$APP_USER" env HOME="$APP_DIR" PATH="/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin" bash -c 'cd /opt/routingnms/backend && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /opt/routingnms/routingnms-api ./cmd/api'
 
 log "Building frontend"
 if [[ -f "$APP_DIR/frontend/package.json" ]]; then
