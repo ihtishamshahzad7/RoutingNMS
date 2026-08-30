@@ -56,21 +56,21 @@ mkdir -p "$APP_DIR"
 log "Configuring PostgreSQL"
 systemctl enable --now postgresql
 DB_PASSWORD="${DB_PASSWORD:-$(openssl rand -hex 24)}"
-if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'" | grep -q 1; then
-  sudo -u postgres psql -v ON_ERROR_STOP=1 -c "CREATE ROLE ${DB_USER} LOGIN PASSWORD '${DB_PASSWORD}'"
+if ! sudo -u postgres -H sh -c 'cd / && psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='"'"'routingnms'"'"'"' | grep -q 1; then
+  sudo -u postgres -H sh -c "cd / && psql -v ON_ERROR_STOP=1 -c \"CREATE ROLE ${DB_USER} LOGIN PASSWORD '${DB_PASSWORD}'\""
 else
-  sudo -u postgres psql -v ON_ERROR_STOP=1 -c "ALTER ROLE ${DB_USER} WITH LOGIN PASSWORD '${DB_PASSWORD}'"
+  sudo -u postgres -H sh -c "cd / && psql -v ON_ERROR_STOP=1 -c \"ALTER ROLE ${DB_USER} WITH LOGIN PASSWORD '${DB_PASSWORD}'\""
 fi
-if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -q 1; then
-  sudo -u postgres createdb -O "$DB_USER" "$DB_NAME"
+if ! sudo -u postgres -H sh -c 'cd / && psql -tAc "SELECT 1 FROM pg_database WHERE datname='"'"'routingnms'"'"'"' | grep -q 1; then
+  sudo -u postgres -H sh -c "cd / && createdb -O '${DB_USER}' '${DB_NAME}'"
 else
-  sudo -u postgres psql -v ON_ERROR_STOP=1 -c "ALTER DATABASE ${DB_NAME} OWNER TO ${DB_USER}"
+  sudo -u postgres -H sh -c "cd / && psql -v ON_ERROR_STOP=1 -c \"ALTER DATABASE ${DB_NAME} OWNER TO ${DB_USER}\""
 fi
 
 log "Downloading RoutingNMS"
 if [[ -d "$APP_DIR/.git" ]]; then
-  git -C "$APP_DIR" fetch --all --prune
-  git -C "$APP_DIR" reset --hard origin/main
+  git -c safe.directory="$APP_DIR" -C "$APP_DIR" fetch --all --prune
+  git -c safe.directory="$APP_DIR" -C "$APP_DIR" reset --hard origin/main
 else
   rm -rf "$APP_DIR"
   git clone --depth 1 "$REPO_URL" "$APP_DIR"
@@ -81,7 +81,7 @@ log "Synchronizing Go dependencies"
 sudo -u "$APP_USER" env HOME="$APP_DIR" PATH="/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin" bash -c 'cd /opt/routingnms/backend && go mod tidy && go mod download && go mod verify'
 
 log "Building backend"
-sudo -u "$APP_USER" env HOME="$APP_DIR" PATH="/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin" bash -c 'cd /opt/routingnms/backend && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /opt/routingnms/routingnms-api ./cmd/api'
+sudo -u "$APP_USER" env HOME="$APP_DIR" PATH="/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin" bash -c 'cd /opt/routingnms/backend && CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags="-s -w" -o /opt/routingnms/routingnms-api ./cmd/api'
 
 log "Building frontend"
 if [[ -f "$APP_DIR/frontend/package.json" ]]; then
