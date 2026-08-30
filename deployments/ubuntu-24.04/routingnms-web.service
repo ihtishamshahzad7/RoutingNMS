@@ -10,7 +10,17 @@ Group=routingnms
 WorkingDirectory=/opt/routingnms/frontend
 Environment=NODE_ENV=production
 Environment=PORT=3000
-Environment=HOSTNAME=127.0.0.1
+# Next.js's own HOSTNAME/-H binding: deliberately loopback-only. `next
+# start` does NOT read the HOSTNAME env var for this (that's a red herring
+# left over from an earlier attempt at this); WEB_BIND_HOST is read
+# explicitly by the `start` script in frontend/package.json via
+# `next start -H ${WEB_BIND_HOST:-127.0.0.1}`. Do not name this HOSTNAME:
+# it collides with the shell's own auto-populated HOSTNAME variable, which
+# can silently resolve to the server's real hostname/IP instead of falling
+# back to 127.0.0.1 when this service is tested by hand from a login shell.
+# Nginx is the only intended entry point (port 80); this keeps port 3000
+# unreachable from outside the server even if a firewall rule is missing.
+Environment=WEB_BIND_HOST=127.0.0.1
 ExecStart=/usr/bin/npm start
 Restart=on-failure
 RestartSec=5
