@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { TopologyCanvas } from '@/components/topology-canvas'
+import { TopologyCanvas } from '../../components/topology-canvas'
 
 type Node={id:string;name:string;type:string;address?:string;health:number}
 type Link={id:string;source:string;target:string;status:string;latencyMs?:number;packetLossPct?:number}
