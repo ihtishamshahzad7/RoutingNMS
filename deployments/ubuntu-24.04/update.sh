@@ -8,7 +8,20 @@ WEB_PORT="3000"
 REPO_URL="${ROUTINGNMS_REPO_URL:-https://github.com/ihtishamshahzad7/RoutingNMS.git}"
 
 log(){ printf '\n[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
-fail(){ echo "ERROR: $*" >&2; exit 1; }
+
+# Prints systemd status + the last log lines for the app services, so a
+# failure further down (a curl that can't connect, a service that isn't
+# active) is self-diagnosing in this script's own output instead of
+# requiring a manual `systemctl status` / `journalctl` round-trip.
+dump_service_diagnostics(){
+  for svc in routingnms-api routingnms-web nginx; do
+    printf '\n----- systemctl status %s -----\n' "$svc"
+    systemctl status "$svc" --no-pager -l 2>&1 || true
+    printf '\n----- journalctl -u %s (last 40 lines) -----\n' "$svc"
+    journalctl -u "$svc" -n 40 --no-pager 2>&1 || true
+  done
+}
+fail(){ echo "ERROR: $*" >&2; dump_service_diagnostics; exit 1; }
 [[ "$(id -u)" -eq 0 ]] || fail "Run as root (sudo -i)."
 [[ -d "$APP_DIR/.git" ]] || fail "$APP_DIR is not a Git checkout. Run install.sh first."
 
@@ -85,6 +98,27 @@ systemctl restart routingnms-api routingnms-web
 systemctl reload nginx
 
 log "Checking API and frontend"
+# `systemctl restart` returns as soon as systemd has forked the process, not
+# once it's actually bound its port -- a Go binary that crashes on startup
+# (bad DATABASE_URL, a failed migration prerequisite, a port already in use)
+# still makes `restart` "succeed", and the very next curl races it. Poll for
+# a few seconds instead of hitting it once, and if it never comes up, fail
+# loudly with the actual service logs attached instead of a bare
+# "Connection refused".
+wait_for_api(){
+  local tries=15
+  for ((i=1; i<=tries; i++)); do
+    if curl -fsS "http://127.0.0.1:${API_PORT}/api/v1/health" >/dev/null 2>&1; then
+      return 0
+    fi
+    if ! systemctl is-active --quiet routingnms-api; then
+      fail "routingnms-api is not running after restart (service exited). See logs above."
+    fi
+    sleep 1
+  done
+  fail "routingnms-api did not respond on 127.0.0.1:${API_PORT} within ${tries}s after restart."
+}
+wait_for_api
 curl -fsS "http://127.0.0.1:${API_PORT}/api/v1/health" | jq .
 curl -fsS "http://127.0.0.1:${API_PORT}/api/v1/ready" | jq .
 curl -fsSI "http://127.0.0.1:${WEB_PORT}/" | head -n 12
