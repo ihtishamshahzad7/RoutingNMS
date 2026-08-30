@@ -15,9 +15,22 @@ log(){ printf '\n[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
 fail(){ echo "ERROR: $*" >&2; exit 1; }
 [[ "$(id -u)" -eq 0 ]] || fail "Run as root (sudo -i)."
 . /etc/os-release
-[[ "${ID:-}" == "ubuntu" && "${VERSION_ID:-}" == "24.04" ]] || fail "This installer requires Ubuntu 24.04 LTS; detected ${PRETTY_NAME:-unknown}."
+
+# Ubuntu LTS compatibility: use the detected LTS release instead of tying the
+# installer directory name to one Ubuntu version.  Ubuntu 22.04 and 24.04 are
+# both currently supported LTS releases.
+if [[ "${ID:-}" != "ubuntu" ]]; then
+  fail "RoutingNMS requires Ubuntu; detected ${PRETTY_NAME:-unknown}."
+fi
+case "${VERSION_ID:-}" in
+  22.04) UBUNTU_CODENAME="jammy"; UBUNTU_MAJOR="22.04" ;;
+  24.04) UBUNTU_CODENAME="noble"; UBUNTU_MAJOR="24.04" ;;
+  26.04) UBUNTU_CODENAME="resolute"; UBUNTU_MAJOR="26.04" ;;
+  *) fail "Unsupported Ubuntu release ${PRETTY_NAME:-unknown}. Supported releases: Ubuntu 22.04, 24.04 and 26.04 LTS." ;;
+esac
 export DEBIAN_FRONTEND=noninteractive
 
+log "Detected supported Ubuntu ${UBUNTU_MAJOR} (${UBUNTU_CODENAME})"
 log "Installing all Ubuntu dependencies"
 apt-get update
 apt-get install -y ca-certificates curl git gnupg lsb-release build-essential nginx postgresql postgresql-contrib snmp snmp-mibs-downloader openssl jq rsync unzip tar sudo
@@ -104,4 +117,4 @@ curl -fsS "http://127.0.0.1:${APP_PORT}/api/v1/health" | jq .
 curl -fsS "http://127.0.0.1:${APP_PORT}/api/v1/ready" | jq .
 
 log "RoutingNMS is installed"
-printf '\nOpen: http://SERVER-IP/\nInstall: %s\n\n' "$APP_DIR"
+printf '\nDetected Ubuntu: %s (%s)\nOpen: http://SERVER-IP/\nInstall: %s\n\n' "$UBUNTU_MAJOR" "$UBUNTU_CODENAME" "$APP_DIR"
