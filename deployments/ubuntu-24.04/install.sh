@@ -117,5 +117,10 @@ sleep 2
 curl -fsS "http://127.0.0.1:${APP_PORT}/api/v1/health" | jq .
 curl -fsS "http://127.0.0.1:${APP_PORT}/api/v1/ready" | jq .
 
+log "Verifying frontend static assets through Nginx"
+ASSET_PATH="$(curl -fsS http://127.0.0.1/ | grep -oE '/_next/static/[^\" ]+\.(css|js)' | head -n 1 || true)"
+[[ -n "$ASSET_PATH" ]] || fail "Could not find a CSS/JS asset in the frontend HTML."
+curl -fsSI "http://127.0.0.1${ASSET_PATH}" | head -n 12
+
 log "RoutingNMS is installed"
 printf '\nDetected Ubuntu: %s.x (%s)\nOpen: http://SERVER-IP/\nInstall: %s\n\n' "$UBUNTU_MAJOR" "$UBUNTU_CODENAME" "$APP_DIR"
