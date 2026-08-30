@@ -65,13 +65,33 @@ curl -fsS "http://127.0.0.1:${API_PORT}/api/v1/health" | jq .
 curl -fsS "http://127.0.0.1:${API_PORT}/api/v1/ready" | jq .
 curl -fsSI "http://127.0.0.1:${WEB_PORT}/" | head -n 12
 
-log "Checking Next.js static assets through Nginx"
-ASSET_PATH="$(curl -fsS http://127.0.0.1:${WEB_PORT}/ | grep -oE '/_next/static/[^\" ]+\.(css|js)' | head -n 1 || true)"
-[[ -n "$ASSET_PATH" ]] || fail "Could not find a CSS/JS asset in the Next.js HTML."
-curl -fsSI "http://127.0.0.1${ASSET_PATH}" | head -n 12
+log "Checking Next.js static CSS and JavaScript through Nginx"
+HTML="$(curl -fsS http://127.0.0.1:${WEB_PORT}/)"
+CSS_PATH="$(printf '%s' "$HTML" | grep -oE '/_next/static/[^\" ]+\.css' | head -n 1 || true)"
+JS_PATH="$(printf '%s' "$HTML" | grep -oE '/_next/static/[^\" ]+\.js' | head -n 1 || true)"
+[[ -n "$CSS_PATH" ]] || fail "Could not find a CSS asset in the Next.js HTML."
+[[ -n "$JS_PATH" ]] || fail "Could not find a JavaScript asset in the Next.js HTML."
+
+CSS_HEADERS="$(curl -fsSI "http://127.0.0.1${CSS_PATH}")" || fail "Next.js CSS asset is not reachable through Nginx: ${CSS_PATH}"
+JS_HEADERS="$(curl -fsSI "http://127.0.0.1${JS_PATH}")" || fail "Next.js JavaScript asset is not reachable through Nginx: ${JS_PATH}"
+
+printf '%s\n' "$CSS_HEADERS" | head -n 12
+printf '%s\n' "$JS_HEADERS" | head -n 12
+
+printf '%s\n' "$CSS_HEADERS" | grep -qiE '200 OK' || fail "CSS asset did not return HTTP 200: ${CSS_PATH}"
+printf '%s\n' "$JS_HEADERS" | grep -qiE '200 OK' || fail "JavaScript asset did not return HTTP 200: ${JS_PATH}"
+printf '%s\n' "$CSS_HEADERS" | grep -qiE 'text/css' || fail "CSS asset has an unexpected Content-Type: ${CSS_PATH}"
+
+# A Tailwind-enabled production build should contain substantially more than the
+# tiny base stylesheet. This catches deployments where utility classes are present
+# in JSX but Tailwind/PostCSS is missing from the build pipeline.
+CSS_LENGTH="$(printf '%s\n' "$CSS_HEADERS" | awk -F': ' 'tolower($1)=="content-length" {print $2}' | tr -d '\r' | tail -n 1)"
+if [[ -n "$CSS_LENGTH" && "$CSS_LENGTH" -lt 1000 ]]; then
+  fail "Production CSS is only ${CSS_LENGTH} bytes. Tailwind utilities were probably not compiled."
+fi
 
 SERVER_IP="$(hostname -I | awk '{print $1}')"
 [[ -n "$SERVER_IP" ]] || SERVER_IP="SERVER-IP"
 
 log "RoutingNMS update completed successfully"
-printf '\nVersion commit: %s\nLogin: http://%s/\nDashboard: http://%s/dashboard\nDefault username: admin\nDefault password: admin123\n\n' "$GIT_NEW" "$SERVER_IP" "$SERVER_IP" 
+printf '\nVersion commit: %s\nLogin: http://%s/\nDashboard: http://%s/dashboard\nDefault username: admin\nDefault password: admin123\n\n' "$GIT_NEW" "$SERVER_IP" "$SERVER_IP"
