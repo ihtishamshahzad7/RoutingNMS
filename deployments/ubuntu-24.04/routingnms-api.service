@@ -1,0 +1,22 @@
+[Unit]
+Description=RoutingNMS API
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=routingnms
+Group=routingnms
+WorkingDirectory=/opt/routingnms/backend
+EnvironmentFile=/opt/routingnms/.env
+ExecStart=/opt/routingnms/routingnms-api
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/routingnms
+
+[Install]
+WantedBy=multi-user.target
