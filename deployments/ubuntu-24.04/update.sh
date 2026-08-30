@@ -20,12 +20,21 @@ git -c safe.directory="$APP_DIR" -C "$APP_DIR" reset --hard origin/main
 GIT_NEW="$(git -c safe.directory="$APP_DIR" -C "$APP_DIR" rev-parse HEAD)"
 printf 'Updated %s -> %s\n' "${GIT_OLD:0:12}" "${GIT_NEW:0:12}"
 
+# The repository is deliberately owned by root. Do dependency resolution/builds as root
+# so Go/npm can update module/package metadata and write build caches without permission errors.
 log "Synchronizing Go dependencies and building backend"
-sudo -u "$APP_USER" env HOME="$APP_DIR" PATH="/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin" bash -c 'cd /opt/routingnms/backend && go mod tidy && go mod download && go mod verify && CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags="-s -w" -o /opt/routingnms/routingnms-api ./cmd/api'
+cd "$APP_DIR/backend"
+go mod tidy
+go mod download
+go mod verify
+CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags="-s -w" \
+  -o "$APP_DIR/routingnms-api" ./cmd/api
 
 if [[ -f "$APP_DIR/frontend/package.json" ]]; then
   log "Installing frontend dependencies and building Next.js"
-  sudo -u "$APP_USER" env HOME="$APP_DIR" PATH="/usr/local/bin:/usr/bin:/bin" bash -c 'cd /opt/routingnms/frontend && npm install --no-audit --no-fund && npm run build'
+  cd "$APP_DIR/frontend"
+  npm install --no-audit --no-fund
+  npm run build
 fi
 
 log "Installing current systemd and Nginx configuration"
