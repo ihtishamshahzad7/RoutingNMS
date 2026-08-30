@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { apiFetch, ApiError } from "../../lib/api";
 
 type RuntimeState = { oltId: string; running: boolean; startedAt?: string; lastPollAt?: string; lastError?: string; pollCount: number };
 type Alert = { id: number; oltId: string; ponId: string; onuId: string; code: string; severity: string; message: string; status: string; lastSeen: string };
@@ -11,11 +12,26 @@ function formatTime(value?: string) { return value ? new Date(value).toLocaleStr
 export default function DashboardPage() {
   const router = useRouter();
   const [connected, setConnected] = useState(false);
+  const [username, setUsername] = useState("");
   const [states, setStates] = useState<RuntimeState[]>([]);
   const [alerts, setAlerts] = useState<Alert[]>([]);
 
+  // Confirm the session is actually valid (not just present) against the
+  // backend. Next.js middleware already redirected here based on cookie
+  // presence alone; this catches a session that expired while the page was
+  // open, or was never valid to begin with.
   useEffect(() => {
-    if (!document.cookie.includes("routingnms_session=1")) router.replace("/");
+    let active = true;
+    apiFetch<{ username: string; mustChangePassword: boolean }>("/auth/me")
+      .then((me) => {
+        if (active) setUsername(me.username);
+      })
+      .catch((err) => {
+        if (active && err instanceof ApiError && err.status === 401) router.replace("/");
+      });
+    return () => {
+      active = false;
+    };
   }, [router]);
 
   useEffect(() => {
@@ -25,17 +41,18 @@ export default function DashboardPage() {
         const health = await fetch("/api/v1/health", { cache: "no-store" });
         if (!active) return;
         setConnected(health.ok);
-        const runtime = await fetch("/api/v1/olt/runtime", { cache: "no-store" });
-        if (runtime.ok) {
-          const data = await runtime.json();
-          if (active) setStates(Array.isArray(data.olts) ? data.olts : []);
-        }
-      } catch { if (active) setConnected(false); }
+        const data = await apiFetch<{ olts: RuntimeState[] }>("/olt/runtime");
+        if (active) setStates(Array.isArray(data.olts) ? data.olts : []);
+      } catch (err) {
+        if (!active) return;
+        setConnected(false);
+        if (err instanceof ApiError && err.status === 401) router.replace("/");
+      }
     };
     load();
     const timer = window.setInterval(load, 10000);
     return () => { active = false; window.clearInterval(timer); };
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     let active = true;
@@ -55,14 +72,18 @@ export default function DashboardPage() {
   const networkHealth = states.length ? Math.round((running / states.length) * 100) : 100;
   const totalPolls = useMemo(() => states.reduce((n, s) => n + s.pollCount, 0), [states]);
 
-  function logout() {
-    document.cookie = "routingnms_session=; path=/; max-age=0; SameSite=Lax";
-    router.replace("/");
+  async function logout() {
+    try {
+      await apiFetch("/auth/logout", { method: "POST" });
+    } finally {
+      router.replace("/");
+      router.refresh();
+    }
   }
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100">
-      <header className="border-b border-slate-800 px-6 py-4"><div className="mx-auto flex max-w-7xl items-center justify-between gap-4"><div><div className="text-xl font-bold">RoutingNMS</div><div className="text-xs text-slate-400">Network Operations Center</div></div><div className="flex items-center gap-4 text-xs text-slate-300"><span className="flex items-center gap-2"><span className={`h-2 w-2 rounded-full ${connected ? "bg-emerald-400" : "bg-amber-400"}`} />{connected ? "Backend connected" : "Backend pending"}</span><button onClick={logout} className="rounded-md border border-slate-700 px-3 py-2 hover:bg-slate-800">Logout</button></div></div></header>
+      <header className="border-b border-slate-800 px-6 py-4"><div className="mx-auto flex max-w-7xl items-center justify-between gap-4"><div><div className="text-xl font-bold">RoutingNMS</div><div className="text-xs text-slate-400">Network Operations Center{username ? ` · ${username}` : ""}</div></div><div className="flex items-center gap-4 text-xs text-slate-300"><span className="flex items-center gap-2"><span className={`h-2 w-2 rounded-full ${connected ? "bg-emerald-400" : "bg-amber-400"}`} />{connected ? "Backend connected" : "Backend pending"}</span><button onClick={logout} className="rounded-md border border-slate-700 px-3 py-2 hover:bg-slate-800">Logout</button></div></div></header>
       <section className="mx-auto max-w-7xl px-6 py-8">
         <div className="mb-8"><p className="text-sm font-medium text-cyan-400">LIVE NOC</p><h1 className="mt-1 text-3xl font-bold">Network Overview</h1><p className="mt-2 text-sm text-slate-400">Real-time visibility for routers, switches, OLTs and access infrastructure.</p></div>
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{[["Network Health",`${networkHealth}%`,states.length?`${running}/${states.length} OLTs running`:"No OLTs registered"],["OLT Pollers",String(running),`${totalPolls} polls completed`],["Critical Alerts",String(critical),critical?"Immediate attention required":"No active critical alerts"],["Open Alerts",String(alerts.length),alerts.length?"Active incidents":"No active incidents"]].map(([label,value,detail])=><article key={label} className="rounded-xl border border-slate-800 bg-slate-900 p-5"><div className="text-sm text-slate-400">{label}</div><div className="mt-2 text-3xl font-semibold">{value}</div><div className="mt-2 text-xs text-slate-500">{detail}</div></article>)}</div>

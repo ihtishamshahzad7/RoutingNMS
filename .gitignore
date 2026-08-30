@@ -30,3 +30,6 @@ postgres-data/
 victoria-data/
 redis-data/
 nats-data/
+
+# Next.js
+next-env.d.ts

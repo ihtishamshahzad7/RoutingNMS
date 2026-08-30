@@ -1,5 +1,17 @@
 @import "tailwindcss";
 
+/*
+ * Tailwind v4 normally auto-discovers template files by scanning outward
+ * from this stylesheet, but that heuristic can miss sources depending on
+ * the working directory a build runs from (for example a deploy script
+ * that builds from a different cwd, or a CI cache that changes what looks
+ * like a project root). Declaring the actual source directories explicitly
+ * makes utility-class detection deterministic across every environment,
+ * dev or production, instead of depending on heuristics.
+ */
+@source "../app";
+@source "../components";
+
 * { box-sizing: border-box; }
 html, body { margin: 0; min-height: 100%; }
 body { background: #07111f; color: #e7eef7; font-family: Arial, Helvetica, sans-serif; }

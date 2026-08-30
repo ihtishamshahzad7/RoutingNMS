@@ -85,7 +85,32 @@ sudo -u "$APP_USER" env HOME="$APP_DIR" PATH="/usr/local/go/bin:/usr/local/bin:/
 
 log "Building frontend"
 if [[ -f "$APP_DIR/frontend/package.json" ]]; then
-  sudo -u "$APP_USER" env HOME="$APP_DIR" PATH="/usr/local/bin:/usr/bin:/bin" bash -c 'cd /opt/routingnms/frontend && npm install --no-audit --no-fund && npm run build'
+  # --include=dev is required even though this shell does not set
+  # NODE_ENV=production itself: Tailwind (tailwindcss, @tailwindcss/postcss)
+  # is a devDependency, and if NODE_ENV=production leaks in from anywhere
+  # (a global profile, an inherited environment), npm silently omits
+  # devDependencies, the build still "succeeds", and the site ships with
+  # almost no CSS. This flag makes the outcome deterministic either way.
+  sudo -u "$APP_USER" env HOME="$APP_DIR" PATH="/usr/local/bin:/usr/bin:/bin" bash -c '
+    cd /opt/routingnms/frontend
+    if [[ -f package-lock.json ]]; then npm ci --include=dev --no-audit --no-fund; else npm install --include=dev --no-audit --no-fund; fi
+    npm run build
+  '
+  CSS_FILE="$(find "$APP_DIR/frontend/.next/static/css" -maxdepth 1 -name '*.css' -print -quit 2>/dev/null || true)"
+  [[ -n "$CSS_FILE" ]] || fail "Next.js build produced no CSS file. Frontend build is broken."
+  CSS_BYTES="$(wc -c < "$CSS_FILE")"
+  [[ "$CSS_BYTES" -ge 1000 ]] || fail "Generated CSS is only ${CSS_BYTES} bytes; Tailwind utilities were not compiled."
+fi
+
+log "Applying PostgreSQL migrations"
+if [[ -d "$APP_DIR/backend/migrations" ]]; then
+  shopt -s nullglob
+  migrations=($(printf '%s\n' "$APP_DIR/backend/migrations"/*.sql | sort -V))
+  for migration in "${migrations[@]}"; do
+    log "Applying $(basename "$migration")"
+    sudo -u postgres psql -d "$DB_NAME" -v ON_ERROR_STOP=1 -f "$migration"
+  done
+  sudo -u postgres psql -d "$DB_NAME" -v ON_ERROR_STOP=1 -c "GRANT USAGE ON SCHEMA public TO ${APP_USER}; GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO ${APP_USER}; GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO ${APP_USER}; ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO ${APP_USER}; ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO ${APP_USER};"
 fi
 
 log "Creating production environment"
