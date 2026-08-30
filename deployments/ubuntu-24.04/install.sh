@@ -14,11 +14,11 @@ REPO_URL="${ROUTINGNMS_REPO_URL:-https://github.com/ihtishamshahzad7/RoutingNMS.
 log(){ printf '\n[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
 fail(){ echo "ERROR: $*" >&2; exit 1; }
 [[ "$(id -u)" -eq 0 ]] || fail "Run as root (sudo -i)."
+[[ -r /etc/os-release ]] || fail "Cannot detect Ubuntu release: /etc/os-release is missing."
 . /etc/os-release
 
-# Ubuntu LTS compatibility: use the detected LTS release instead of tying the
-# installer directory name to one Ubuntu version.  Ubuntu 22.04 and 24.04 are
-# both currently supported LTS releases.
+# Point releases such as Ubuntu 22.04.4 are represented by VERSION_ID=22.04.
+# Therefore compatibility must be checked by the LTS series, not PRETTY_NAME.
 if [[ "${ID:-}" != "ubuntu" ]]; then
   fail "RoutingNMS requires Ubuntu; detected ${PRETTY_NAME:-unknown}."
 fi
@@ -26,11 +26,11 @@ case "${VERSION_ID:-}" in
   22.04) UBUNTU_CODENAME="jammy"; UBUNTU_MAJOR="22.04" ;;
   24.04) UBUNTU_CODENAME="noble"; UBUNTU_MAJOR="24.04" ;;
   26.04) UBUNTU_CODENAME="resolute"; UBUNTU_MAJOR="26.04" ;;
-  *) fail "Unsupported Ubuntu release ${PRETTY_NAME:-unknown}. Supported releases: Ubuntu 22.04, 24.04 and 26.04 LTS." ;;
+  *) fail "Unsupported Ubuntu release ${PRETTY_NAME:-unknown} (VERSION_ID=${VERSION_ID:-unknown}). Supported releases: Ubuntu 22.04.x, 24.04.x and 26.04.x LTS." ;;
 esac
 export DEBIAN_FRONTEND=noninteractive
 
-log "Detected supported Ubuntu ${UBUNTU_MAJOR} (${UBUNTU_CODENAME})"
+log "Detected supported Ubuntu ${UBUNTU_MAJOR}.x (${UBUNTU_CODENAME})"
 log "Installing all Ubuntu dependencies"
 apt-get update
 apt-get install -y ca-certificates curl git gnupg lsb-release build-essential nginx postgresql postgresql-contrib snmp snmp-mibs-downloader openssl jq rsync unzip tar sudo
@@ -117,4 +117,4 @@ curl -fsS "http://127.0.0.1:${APP_PORT}/api/v1/health" | jq .
 curl -fsS "http://127.0.0.1:${APP_PORT}/api/v1/ready" | jq .
 
 log "RoutingNMS is installed"
-printf '\nDetected Ubuntu: %s (%s)\nOpen: http://SERVER-IP/\nInstall: %s\n\n' "$UBUNTU_MAJOR" "$UBUNTU_CODENAME" "$APP_DIR"
+printf '\nDetected Ubuntu: %s.x (%s)\nOpen: http://SERVER-IP/\nInstall: %s\n\n' "$UBUNTU_MAJOR" "$UBUNTU_CODENAME" "$APP_DIR"
