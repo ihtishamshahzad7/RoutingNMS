@@ -15,7 +15,9 @@ import (
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/auth"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/devices"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/incidents"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/mib"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/olt"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/snmp"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/snmptrap"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/syslog"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/topology"
@@ -212,6 +214,17 @@ func main() {
 		mux.Handle("POST /api/v1/traps/rules", authHandler.Middleware(snmptrap.RulesAPI{Repo: trapRepo}))
 		mux.Handle("DELETE /api/v1/traps/rules/{id}", authHandler.Middleware(snmptrap.RuleAPI{Repo: trapRepo}))
 		mux.Handle("GET /api/v1/traps", authHandler.Middleware(snmptrap.TrapsAPI{Repo: trapRepo}))
+
+		// MIB manager: upload vendor .mib/.my files, search by name/OID, and
+		// a live OID tester against a real device, as called by
+		// frontend/app/mibs/page.tsx.
+		mibRepo := mib.Repository{DB: db}
+		devicesRepo := devices.Repository{DB: db}
+		mux.Handle("GET /api/v1/mibs", authHandler.Middleware(mib.API{Repo: mibRepo}))
+		mux.Handle("POST /api/v1/mibs", authHandler.Middleware(mib.API{Repo: mibRepo}))
+		mux.Handle("DELETE /api/v1/mibs/{id}", authHandler.Middleware(mib.MIBAPI{Repo: mibRepo}))
+		mux.Handle("GET /api/v1/mibs/search", authHandler.Middleware(mib.SearchAPI{Repo: mibRepo}))
+		mux.Handle("POST /api/v1/mibs/test", authHandler.Middleware(mib.TestAPI{Repo: mibRepo, Devices: devicesRepo, Collector: snmp.Collector{}}))
 	} else {
 		unavailable := func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -242,6 +255,11 @@ func main() {
 		mux.HandleFunc("POST /api/v1/traps/rules", unavailable)
 		mux.HandleFunc("DELETE /api/v1/traps/rules/{id}", unavailable)
 		mux.HandleFunc("GET /api/v1/traps", unavailable)
+		mux.HandleFunc("GET /api/v1/mibs", unavailable)
+		mux.HandleFunc("POST /api/v1/mibs", unavailable)
+		mux.HandleFunc("DELETE /api/v1/mibs/{id}", unavailable)
+		mux.HandleFunc("GET /api/v1/mibs/search", unavailable)
+		mux.HandleFunc("POST /api/v1/mibs/test", unavailable)
 	}
 
 	srv := &http.Server{Addr: ":" + port, Handler: securityHeaders(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
