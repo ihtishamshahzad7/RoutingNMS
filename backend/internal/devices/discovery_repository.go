@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/snmp"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func (r Repository) DiscoveryTarget(ctx context.Context, id string) (DeviceInput, error) {
