@@ -45,8 +45,15 @@ func (h Handler) UpdateSNMP(w http.ResponseWriter, r *http.Request) {
     if id == "" { http.Error(w,"device ID is required",400); return }
     var req SNMPConfigRequest
     if err := json.NewDecoder(r.Body).Decode(&req); err != nil { http.Error(w,"invalid JSON",400); return }
-    if req.Port == 0 { req.Port = 161 }; if req.TimeoutMS == 0 { req.TimeoutMS = 3000 }
-    if req.Enabled && req.Version != snmp.V2c && req.Version != snmp.V3 { http.Error(w,"SNMP version must be 2c or 3",400); return }
+    if req.Port == 0 { req.Port = 161 }
+    if req.TimeoutMS == 0 { req.TimeoutMS = 3000 }
+    version := snmp.Version(strings.TrimSpace(strings.ToLower(req.Version)))
+    if req.Enabled && version != snmp.V2c && version != snmp.V3 {
+        http.Error(w,"SNMP version must be 2c or 3",400)
+        return
+    }
+    req.Version = string(version)
     if err := h.Repo.UpdateSNMP(r.Context(), id, req); err != nil { http.Error(w,"failed to save SNMP configuration: "+err.Error(),500); return }
-    w.Header().Set("Content-Type","application/json"); _=json.NewEncoder(w).Encode(map[string]any{"status":"ok","deviceId":id,"snmpEnabled":req.Enabled,"snmpVersion":req.Version,"snmpPort":req.Port})
+    w.Header().Set("Content-Type","application/json")
+    _=json.NewEncoder(w).Encode(map[string]any{"status":"ok","deviceId":id,"snmpEnabled":req.Enabled,"snmpVersion":req.Version,"snmpPort":req.Port})
 }
