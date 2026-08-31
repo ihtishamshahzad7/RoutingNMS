@@ -15,6 +15,7 @@ import (
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/auth"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/devices"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/incidents"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/metricsdb"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/mib"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/olt"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/snmp"
@@ -67,6 +68,7 @@ func main() {
 		profiles := olt.DefaultProfileRegistry()
 		config := olt.ConfigService{DB: db, Profiles: profiles}
 		oltRuntime = olt.NewRuntimeManager(config, olt.Repository{DB: db})
+		oltRuntime.Metrics = olt.MetricSampler{Repo: metricsdb.Repository{DB: db}}
 		if err := oltRuntime.Start(ctx); err != nil {
 			log.Printf("OLT runtime initialization failed: %v", err)
 		}
@@ -113,6 +115,16 @@ func main() {
 		trapListener := snmptrap.Listener{Repo: snmptrap.Repository{DB: db}}
 		go snmptrap.ListenWithFallback(ctx, trapListener, trapAddr, trapFallbackAddr)
 		go pruneTrapsPeriodically(ctx, db)
+
+		// Per-device metric history: periodically probes every enabled
+		// device (same health check as GET /devices/health) and records
+		// up/latency samples, powering the charts on each device's page.
+		// OLT/ONU optical metrics are recorded from the OLT poller above
+		// instead (oltRuntime.Metrics), since that already has real data
+		// every poll cycle.
+		deviceMetricsInterval := time.Duration(envInt("DEVICE_METRICS_INTERVAL_SECONDS", 60)) * time.Second
+		go devices.SamplePeriodically(ctx, devices.Repository{DB: db}, metricsdb.Repository{DB: db}, deviceMetricsInterval)
+		go pruneMetricsPeriodically(ctx, db)
 	}
 
 	mux := http.NewServeMux()
@@ -225,6 +237,10 @@ func main() {
 		mux.Handle("DELETE /api/v1/mibs/{id}", authHandler.Middleware(mib.MIBAPI{Repo: mibRepo}))
 		mux.Handle("GET /api/v1/mibs/search", authHandler.Middleware(mib.SearchAPI{Repo: mibRepo}))
 		mux.Handle("POST /api/v1/mibs/test", authHandler.Middleware(mib.TestAPI{Repo: mibRepo, Devices: devicesRepo, Collector: snmp.Collector{}}))
+
+		// Per-device/OLT/ONU metric history, as called by the charts on
+		// frontend/app/devices/[id]/page.tsx and frontend/app/olts/[id]/page.tsx.
+		mux.Handle("GET /api/v1/metrics", authHandler.Middleware(metricsdb.API{Repo: metricsdb.Repository{DB: db}}))
 	} else {
 		unavailable := func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -260,6 +276,7 @@ func main() {
 		mux.HandleFunc("DELETE /api/v1/mibs/{id}", unavailable)
 		mux.HandleFunc("GET /api/v1/mibs/search", unavailable)
 		mux.HandleFunc("POST /api/v1/mibs/test", unavailable)
+		mux.HandleFunc("GET /api/v1/metrics", unavailable)
 	}
 
 	srv := &http.Server{Addr: ":" + port, Handler: securityHeaders(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
@@ -329,6 +346,24 @@ func pruneTrapsPeriodically(ctx context.Context, db *pgxpool.Pool) {
 				log.Printf("prune snmp traps: %v", err)
 			} else if n > 0 {
 				log.Printf("pruned %d snmp traps older than %s", n, retention)
+			}
+		}
+	}
+}
+func pruneMetricsPeriodically(ctx context.Context, db *pgxpool.Pool) {
+	ticker := time.NewTicker(6 * time.Hour)
+	defer ticker.Stop()
+	const retention = 30 * 24 * time.Hour
+	repo := metricsdb.Repository{DB: db}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if n, err := repo.PruneOlderThan(ctx, retention); err != nil {
+				log.Printf("prune metric samples: %v", err)
+			} else if n > 0 {
+				log.Printf("pruned %d metric samples older than %s", n, retention)
 			}
 		}
 	}
