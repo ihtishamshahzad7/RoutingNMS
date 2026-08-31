@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/alertsfeed"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/auth"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/devices"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/discovery"
@@ -250,6 +251,12 @@ func main() {
 		mux.Handle("POST /api/v1/discovery/scan", authHandler.Middleware(discovery.ScanAPI{Manager: discoveryManager}))
 		mux.Handle("GET /api/v1/discovery/scan/{id}", authHandler.Middleware(discovery.JobAPI{Manager: discoveryManager}))
 		mux.Handle("POST /api/v1/discovery/import", authHandler.Middleware(discovery.ImportAPI{Manager: discoveryManager, Devices: devicesRepo}))
+
+		// Unified active-alerts feed (open OLT alerts + unreachable devices
+		// + recent critical/warning SNMP traps), polled by the browser
+		// voice-alert feature so it doesn't have to stitch three APIs
+		// together itself.
+		mux.Handle("GET /api/v1/alerts/active", authHandler.Middleware(alertsfeed.API{Repo: alertsfeed.Repository{DB: db}}))
 	} else {
 		unavailable := func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -289,6 +296,7 @@ func main() {
 		mux.HandleFunc("POST /api/v1/discovery/scan", unavailable)
 		mux.HandleFunc("GET /api/v1/discovery/scan/{id}", unavailable)
 		mux.HandleFunc("POST /api/v1/discovery/import", unavailable)
+		mux.HandleFunc("GET /api/v1/alerts/active", unavailable)
 	}
 
 	srv := &http.Server{Addr: ":" + port, Handler: securityHeaders(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}

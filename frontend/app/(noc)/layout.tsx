@@ -1,4 +1,5 @@
 import Sidebar from "../../components/sidebar";
+import VoiceAlerts from "../../components/voice-alerts";
 
 // Shared chrome for every authenticated NOC page (dashboard, devices, olts,
 // incidents, topology). A route group -- "(noc)" is stripped from the URL,
@@ -9,6 +10,7 @@ export default function NocLayout({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen bg-slate-950 text-slate-100">
       <Sidebar />
       <div className="min-w-0 flex-1 overflow-x-hidden">{children}</div>
+      <VoiceAlerts />
     </div>
   );
 }
