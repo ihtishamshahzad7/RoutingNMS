@@ -16,6 +16,7 @@ import (
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/devices"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/incidents"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/olt"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/snmptrap"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/syslog"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/topology"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -92,6 +93,24 @@ func main() {
 			}
 		}()
 		go pruneSyslogPeriodically(ctx, db)
+
+		// SNMP trap listener: OLTs/routers/switches/UPS controllers etc. can
+		// send v1/v2c/v3 traps here; matched against trap_rules for
+		// severity and stored for history. Defaults to :1162 (no elevated
+		// privileges needed); set TRAP_ADDR=":162" and grant the service
+		// CAP_NET_BIND_SERVICE (see routingnms-api.service) to use the
+		// standard port instead.
+		trapAddr := os.Getenv("TRAP_ADDR")
+		if trapAddr == "" {
+			trapAddr = ":1162"
+		}
+		trapFallbackAddr := os.Getenv("TRAP_FALLBACK_ADDR")
+		if trapFallbackAddr == "" {
+			trapFallbackAddr = ":1162"
+		}
+		trapListener := snmptrap.Listener{Repo: snmptrap.Repository{DB: db}}
+		go snmptrap.ListenWithFallback(ctx, trapListener, trapAddr, trapFallbackAddr)
+		go pruneTrapsPeriodically(ctx, db)
 	}
 
 	mux := http.NewServeMux()
@@ -177,7 +196,22 @@ func main() {
 		mux.Handle("GET /api/topology", authHandler.Middleware(topology.API{Graph: topology.LiveGraph(db)}))
 
 		// Recent syslog messages, as called by frontend/app/syslog/page.tsx.
-		mux.Handle("GET /api/syslog", authHandler.Middleware(syslog.API{DB: db}))
+		// Registered under /api/v1 (not bare /api) to match apiFetch's
+		// API_BASE, which the syslog page uses -- the bare /api/syslog path
+		// this used to be registered under never matched what the frontend
+		// actually requested (Next.js's own 404 page was silently served by
+		// the `/` nginx fallback instead of the API's real 404, and
+		// SyslogPage's JSON parse then failed, always showing "No syslog
+		// messages received yet." even with real data flowing in).
+		mux.Handle("GET /api/v1/syslog", authHandler.Middleware(syslog.API{DB: db}))
+
+		// SNMP trap history + alert rule engine, as called by
+		// frontend/app/traps/page.tsx.
+		trapRepo := snmptrap.Repository{DB: db}
+		mux.Handle("GET /api/v1/traps/rules", authHandler.Middleware(snmptrap.RulesAPI{Repo: trapRepo}))
+		mux.Handle("POST /api/v1/traps/rules", authHandler.Middleware(snmptrap.RulesAPI{Repo: trapRepo}))
+		mux.Handle("DELETE /api/v1/traps/rules/{id}", authHandler.Middleware(snmptrap.RuleAPI{Repo: trapRepo}))
+		mux.Handle("GET /api/v1/traps", authHandler.Middleware(snmptrap.TrapsAPI{Repo: trapRepo}))
 	} else {
 		unavailable := func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -203,7 +237,11 @@ func main() {
 		mux.HandleFunc("GET /api/incidents/", unavailable)
 		mux.HandleFunc("POST /api/incidents/", unavailable)
 		mux.HandleFunc("GET /api/topology", unavailable)
-		mux.HandleFunc("GET /api/syslog", unavailable)
+		mux.HandleFunc("GET /api/v1/syslog", unavailable)
+		mux.HandleFunc("GET /api/v1/traps/rules", unavailable)
+		mux.HandleFunc("POST /api/v1/traps/rules", unavailable)
+		mux.HandleFunc("DELETE /api/v1/traps/rules/{id}", unavailable)
+		mux.HandleFunc("GET /api/v1/traps", unavailable)
 	}
 
 	srv := &http.Server{Addr: ":" + port, Handler: securityHeaders(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
@@ -255,6 +293,24 @@ func pruneSyslogPeriodically(ctx context.Context, db *pgxpool.Pool) {
 				log.Printf("prune syslog messages: %v", err)
 			} else if n > 0 {
 				log.Printf("pruned %d syslog messages older than %s", n, retention)
+			}
+		}
+	}
+}
+func pruneTrapsPeriodically(ctx context.Context, db *pgxpool.Pool) {
+	ticker := time.NewTicker(6 * time.Hour)
+	defer ticker.Stop()
+	const retention = 30 * 24 * time.Hour
+	repo := snmptrap.Repository{DB: db}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if n, err := repo.PruneOlderThan(ctx, retention); err != nil {
+				log.Printf("prune snmp traps: %v", err)
+			} else if n > 0 {
+				log.Printf("pruned %d snmp traps older than %s", n, retention)
 			}
 		}
 	}

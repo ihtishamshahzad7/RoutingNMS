@@ -12,6 +12,7 @@ const NAV = [
   { name: "Incidents", href: "/incidents", icon: "⚠" },
   { name: "Topology", href: "/topology", icon: "☷" },
   { name: "Syslog", href: "/syslog", icon: "☰" },
+  { name: "SNMP Traps", href: "/traps", icon: "⚡" },
 ];
 
 /**
