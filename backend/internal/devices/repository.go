@@ -3,8 +3,8 @@ package devices
 import (
     "context"
     "fmt"
+    "time"
 
-    "github.com/ihtishamshahzad7/RoutingNMS/backend/internal/snmp"
     "github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -38,12 +38,9 @@ func (r Repository) Create(ctx context.Context, in DeviceInput) (Record, error) 
 
 func (r Repository) List(ctx context.Context, organizationID string) ([]Record, error) {
     if r.DB == nil { return nil, fmt.Errorf("device repository is not initialized") }
-    rows, err := r.DB.Query(ctx, `SELECT id,organization_id,name,address,device_type,COALESCE(vendor,''),COALESCE(model,''),COALESCE(serial_number,''),enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port FROM devices WHERE organization_id=$1 ORDER BY name`, organizationID)
+    rows, err := r.DB.Query(ctx, `SELECT id,organization_id,name,address,device_type,vendor,model,serial_number,enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port FROM devices WHERE organization_id=$1 ORDER BY name`, organizationID)
     if err != nil { return nil, err }; defer rows.Close()
     items := []Record{}
     for rows.Next() { var d Record; if err := rows.Scan(&d.ID,&d.OrganizationID,&d.Name,&d.Address,&d.DeviceType,&d.Vendor,&d.Model,&d.SerialNumber,&d.Enabled,&d.MonitoringIntervalSeconds,&d.SNMPEnabled,&d.SNMPVersion,&d.SNMPPort); err != nil { return nil, err }; d.SNMPConfigured=d.SNMPEnabled; items=append(items,d) }
     return items, rows.Err()
 }
-
-// Ensure the compiler keeps the SNMP package dependency explicit for device records.
-var _ = snmp.V2c
