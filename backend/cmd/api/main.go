@@ -20,6 +20,7 @@ import (
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/metricsdb"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/mib"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/olt"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/provisioning"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/snmp"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/snmptrap"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/syslog"
@@ -257,6 +258,30 @@ func main() {
 		// voice-alert feature so it doesn't have to stitch three APIs
 		// together itself.
 		mux.Handle("GET /api/v1/alerts/active", authHandler.Middleware(alertsfeed.API{Repo: alertsfeed.Repository{DB: db}}))
+
+		// RouterOS auto-provisioning: admin pre-registers a router device
+		// (with its serial number) and assigns a script template; the
+		// router itself then pulls its config via `/tool fetch` using a
+		// shared token (RouterOS has no session cookie, so it can't use
+		// authHandler.Middleware like everything else here). There is
+		// deliberately no auto-registration of unknown devices -- only a
+		// device already known by serial number can be provisioned.
+		provisioningRepo := provisioning.Repository{DB: db}
+		provisionSalt := os.Getenv("PROVISION_SALT")
+		if provisionSalt == "" {
+			provisionSalt = "routingnms-dev-salt"
+			log.Printf("PROVISION_SALT is not set; using an insecure default -- set it in production")
+		}
+		provisionToken := os.Getenv("PROVISION_TOKEN")
+		provisionBaseURL := strings.TrimSuffix(os.Getenv("PUBLIC_API_BASE_URL"), "/")
+		mux.Handle("GET /api/v1/provisioning/templates", authHandler.Middleware(provisioning.TemplatesAPI{Repo: provisioningRepo}))
+		mux.Handle("POST /api/v1/provisioning/templates", authHandler.Middleware(provisioning.TemplatesAPI{Repo: provisioningRepo}))
+		mux.Handle("GET /api/v1/provisioning/templates/{id}", authHandler.Middleware(provisioning.TemplatesAPI{Repo: provisioningRepo}))
+		mux.Handle("PUT /api/v1/provisioning/templates/{id}", authHandler.Middleware(provisioning.TemplatesAPI{Repo: provisioningRepo}))
+		mux.Handle("DELETE /api/v1/provisioning/templates/{id}", authHandler.Middleware(provisioning.TemplatesAPI{Repo: provisioningRepo}))
+		mux.Handle("PUT /api/v1/devices/{id}/provisioning", authHandler.Middleware(provisioning.AssignAPI{Templates: provisioningRepo, Devices: devicesRepo}))
+		mux.Handle("GET /api/v1/devices/{id}/provisioning/preview", authHandler.Middleware(provisioning.PreviewAPI{Templates: provisioningRepo, Devices: devicesRepo, Salt: provisionSalt, BaseURL: provisionBaseURL, Token: provisionToken}))
+		mux.Handle("GET /api/v1/provision/routeros/{serial}", provisioning.FetchAPI{Templates: provisioningRepo, Devices: devicesRepo, Salt: provisionSalt, Token: provisionToken})
 	} else {
 		unavailable := func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -297,6 +322,14 @@ func main() {
 		mux.HandleFunc("GET /api/v1/discovery/scan/{id}", unavailable)
 		mux.HandleFunc("POST /api/v1/discovery/import", unavailable)
 		mux.HandleFunc("GET /api/v1/alerts/active", unavailable)
+		mux.HandleFunc("GET /api/v1/provisioning/templates", unavailable)
+		mux.HandleFunc("POST /api/v1/provisioning/templates", unavailable)
+		mux.HandleFunc("GET /api/v1/provisioning/templates/{id}", unavailable)
+		mux.HandleFunc("PUT /api/v1/provisioning/templates/{id}", unavailable)
+		mux.HandleFunc("DELETE /api/v1/provisioning/templates/{id}", unavailable)
+		mux.HandleFunc("PUT /api/v1/devices/{id}/provisioning", unavailable)
+		mux.HandleFunc("GET /api/v1/devices/{id}/provisioning/preview", unavailable)
+		mux.HandleFunc("GET /api/v1/provision/routeros/{serial}", unavailable)
 	}
 
 	srv := &http.Server{Addr: ":" + port, Handler: securityHeaders(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}

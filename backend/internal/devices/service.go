@@ -16,6 +16,7 @@ type DeviceInput struct {
 	Address string
 	DeviceType string
 	Vendor string
+	SerialNumber string
 	SNMP snmp.Credentials
 	SNMPPort uint16
 	Timeout time.Duration

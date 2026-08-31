@@ -25,6 +25,8 @@ type Record struct {
 	SNMPVersion               string `json:"snmpVersion"`
 	SNMPPort                  int    `json:"snmpPort"`
 	SNMPConfigured            bool   `json:"snmpConfigured"`
+	ProvisioningTemplateID    *int64 `json:"provisioningTemplateId,omitempty"`
+	LastProvisionedAt         *time.Time `json:"lastProvisionedAt,omitempty"`
 }
 
 func (r Repository) Create(ctx context.Context, in DeviceInput) (Record, error) {
@@ -38,7 +40,7 @@ func (r Repository) Create(ctx context.Context, in DeviceInput) (Record, error) 
 		in.Timeout = 3 * time.Second
 	}
 	var out Record
-	err := r.DB.QueryRow(ctx, `INSERT INTO devices (organization_id,name,address,device_type,vendor,enabled,snmp_enabled,snmp_version,snmp_community,snmp_username,snmp_auth_protocol,snmp_auth_password,snmp_priv_protocol,snmp_priv_password,snmp_port,snmp_timeout_ms) VALUES ($1,$2,$3,$4,$5,true,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id,organization_id,name,address,device_type,COALESCE(vendor,''),COALESCE(model,''),COALESCE(serial_number,''),enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port`, in.OrganizationID, in.Name, in.Address, in.DeviceType, in.Vendor, in.SNMP.Version != "", in.SNMP.Version, in.SNMP.Community, in.SNMP.Username, in.SNMP.AuthProto, in.SNMP.AuthPass, in.SNMP.PrivProto, in.SNMP.PrivPass, in.SNMPPort, int(in.Timeout/time.Millisecond)).Scan(&out.ID, &out.OrganizationID, &out.Name, &out.Address, &out.DeviceType, &out.Vendor, &out.Model, &out.SerialNumber, &out.Enabled, &out.MonitoringIntervalSeconds, &out.SNMPEnabled, &out.SNMPVersion, &out.SNMPPort)
+	err := r.DB.QueryRow(ctx, `INSERT INTO devices (organization_id,name,address,device_type,vendor,serial_number,enabled,snmp_enabled,snmp_version,snmp_community,snmp_username,snmp_auth_protocol,snmp_auth_password,snmp_priv_protocol,snmp_priv_password,snmp_port,snmp_timeout_ms) VALUES ($1,$2,$3,$4,$5,$6,true,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id,organization_id,name,address,device_type,COALESCE(vendor,''),COALESCE(model,''),COALESCE(serial_number,''),enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port`, in.OrganizationID, in.Name, in.Address, in.DeviceType, in.Vendor, in.SerialNumber, in.SNMP.Version != "", in.SNMP.Version, in.SNMP.Community, in.SNMP.Username, in.SNMP.AuthProto, in.SNMP.AuthPass, in.SNMP.PrivProto, in.SNMP.PrivPass, in.SNMPPort, int(in.Timeout/time.Millisecond)).Scan(&out.ID, &out.OrganizationID, &out.Name, &out.Address, &out.DeviceType, &out.Vendor, &out.Model, &out.SerialNumber, &out.Enabled, &out.MonitoringIntervalSeconds, &out.SNMPEnabled, &out.SNMPVersion, &out.SNMPPort)
 	out.SNMPConfigured = out.SNMPEnabled
 	return out, err
 }
@@ -93,5 +95,52 @@ func (r Repository) UpdateSNMP(ctx context.Context, id string, req SNMPConfigReq
 		return fmt.Errorf("device repository is not initialized")
 	}
 	_, err := r.DB.Exec(ctx, `UPDATE devices SET snmp_enabled=$2,snmp_version=$3,snmp_community=$4,snmp_username=$5,snmp_auth_protocol=$6,snmp_auth_password=$7,snmp_priv_protocol=$8,snmp_priv_password=$9,snmp_port=$10,snmp_timeout_ms=$11,updated_at=NOW() WHERE id=$1`, id, req.Enabled, req.Version, req.Community, req.Username, req.AuthProto, req.AuthPass, req.PrivProto, req.PrivPass, req.Port, req.TimeoutMS)
+	return err
+}
+
+// GetBySerial looks up an enabled device by its serial number -- used by the
+// RouterOS provisioning fetch endpoint, which authenticates the caller by a
+// shared token rather than a session, so the serial number in the URL is the
+// only way to identify which device is asking.
+func (r Repository) GetBySerial(ctx context.Context, serial string) (Record, error) {
+	if r.DB == nil {
+		return Record{}, fmt.Errorf("device repository is not initialized")
+	}
+	var d Record
+	err := r.DB.QueryRow(ctx, `SELECT id,organization_id,name,address,device_type,COALESCE(vendor,''),COALESCE(model,''),COALESCE(serial_number,''),enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port,provisioning_template_id,last_provisioned_at FROM devices WHERE serial_number=$1 AND enabled=true`, serial).
+		Scan(&d.ID, &d.OrganizationID, &d.Name, &d.Address, &d.DeviceType, &d.Vendor, &d.Model, &d.SerialNumber, &d.Enabled, &d.MonitoringIntervalSeconds, &d.SNMPEnabled, &d.SNMPVersion, &d.SNMPPort, &d.ProvisioningTemplateID, &d.LastProvisionedAt)
+	d.SNMPConfigured = d.SNMPEnabled
+	return d, err
+}
+
+// GetByID looks up a single device by ID, for the provisioning preview endpoint.
+func (r Repository) GetByID(ctx context.Context, id string) (Record, error) {
+	if r.DB == nil {
+		return Record{}, fmt.Errorf("device repository is not initialized")
+	}
+	var d Record
+	err := r.DB.QueryRow(ctx, `SELECT id,organization_id,name,address,device_type,COALESCE(vendor,''),COALESCE(model,''),COALESCE(serial_number,''),enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port,provisioning_template_id,last_provisioned_at FROM devices WHERE id=$1`, id).
+		Scan(&d.ID, &d.OrganizationID, &d.Name, &d.Address, &d.DeviceType, &d.Vendor, &d.Model, &d.SerialNumber, &d.Enabled, &d.MonitoringIntervalSeconds, &d.SNMPEnabled, &d.SNMPVersion, &d.SNMPPort, &d.ProvisioningTemplateID, &d.LastProvisionedAt)
+	d.SNMPConfigured = d.SNMPEnabled
+	return d, err
+}
+
+// UpdateProvisioning assigns (or clears, with a nil templateID) the
+// provisioning template for a device.
+func (r Repository) UpdateProvisioning(ctx context.Context, id string, templateID *int64) error {
+	if r.DB == nil {
+		return fmt.Errorf("device repository is not initialized")
+	}
+	_, err := r.DB.Exec(ctx, `UPDATE devices SET provisioning_template_id=$2, updated_at=NOW() WHERE id=$1`, id, templateID)
+	return err
+}
+
+// TouchProvisioned records that a device successfully fetched its
+// provisioning script just now.
+func (r Repository) TouchProvisioned(ctx context.Context, id string) error {
+	if r.DB == nil {
+		return fmt.Errorf("device repository is not initialized")
+	}
+	_, err := r.DB.Exec(ctx, `UPDATE devices SET last_provisioned_at=NOW() WHERE id=$1`, id)
 	return err
 }
