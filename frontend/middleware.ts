@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 // Routes that require an authenticated session. Everything else (the login
 // page itself, and any future public route) is left alone.
-const PROTECTED_PREFIXES = ["/dashboard", "/devices", "/incidents", "/olts", "/topology"];
+const PROTECTED_PREFIXES = ["/dashboard", "/devices", "/incidents", "/olts", "/topology", "/syslog"];
 
 const SESSION_COOKIE = "routingnms_session";
 
@@ -34,5 +34,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/", "/dashboard/:path*", "/devices/:path*", "/incidents/:path*", "/olts/:path*", "/topology/:path*"],
+  matcher: ["/", "/dashboard/:path*", "/devices/:path*", "/incidents/:path*", "/olts/:path*", "/topology/:path*", "/syslog/:path*"],
 };

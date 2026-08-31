@@ -11,6 +11,7 @@ const NAV = [
   { name: "OLTs", href: "/olts", icon: "◈" },
   { name: "Incidents", href: "/incidents", icon: "⚠" },
   { name: "Topology", href: "/topology", icon: "☷" },
+  { name: "Syslog", href: "/syslog", icon: "☰" },
 ];
 
 /**

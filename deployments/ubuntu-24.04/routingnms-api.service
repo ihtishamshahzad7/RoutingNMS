@@ -17,6 +17,12 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/opt/routingnms
+# Lets the syslog receiver (internal/syslog) bind the standard port 514 if
+# an operator sets SYSLOG_ADDR=:514 in .env; the default (SYSLOG_ADDR unset,
+# ":1514") doesn't need this since it's an unprivileged port, so this is a
+# no-op unless :514 is actually requested.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 
 [Install]
 WantedBy=multi-user.target
