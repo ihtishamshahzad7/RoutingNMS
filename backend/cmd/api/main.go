@@ -14,6 +14,7 @@ import (
 
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/auth"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/devices"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/discovery"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/incidents"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/metricsdb"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/mib"
@@ -241,6 +242,14 @@ func main() {
 		// Per-device/OLT/ONU metric history, as called by the charts on
 		// frontend/app/devices/[id]/page.tsx and frontend/app/olts/[id]/page.tsx.
 		mux.Handle("GET /api/v1/metrics", authHandler.Middleware(metricsdb.API{Repo: metricsdb.Repository{DB: db}}))
+
+		// Subnet auto-discovery: scan a CIDR over SNMP, classify what
+		// responds, and one-click import selected hosts as devices, as
+		// called by frontend/app/devices/page.tsx's "Discover subnet" flow.
+		discoveryManager := discovery.NewManager()
+		mux.Handle("POST /api/v1/discovery/scan", authHandler.Middleware(discovery.ScanAPI{Manager: discoveryManager}))
+		mux.Handle("GET /api/v1/discovery/scan/{id}", authHandler.Middleware(discovery.JobAPI{Manager: discoveryManager}))
+		mux.Handle("POST /api/v1/discovery/import", authHandler.Middleware(discovery.ImportAPI{Manager: discoveryManager, Devices: devicesRepo}))
 	} else {
 		unavailable := func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -277,6 +286,9 @@ func main() {
 		mux.HandleFunc("GET /api/v1/mibs/search", unavailable)
 		mux.HandleFunc("POST /api/v1/mibs/test", unavailable)
 		mux.HandleFunc("GET /api/v1/metrics", unavailable)
+		mux.HandleFunc("POST /api/v1/discovery/scan", unavailable)
+		mux.HandleFunc("GET /api/v1/discovery/scan/{id}", unavailable)
+		mux.HandleFunc("POST /api/v1/discovery/import", unavailable)
 	}
 
 	srv := &http.Server{Addr: ":" + port, Handler: securityHeaders(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
