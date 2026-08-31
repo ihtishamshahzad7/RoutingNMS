@@ -12,6 +12,7 @@ coverage/
 # Go
 bin/
 *.test
+*.tsbuildinfo
 
 # IDE
 .vscode/
