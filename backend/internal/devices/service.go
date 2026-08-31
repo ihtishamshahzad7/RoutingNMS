@@ -30,11 +30,25 @@ type TestResult struct {
 	Error string `json:"error,omitempty"`
 }
 
-// ValidateInput performs cheap validation before any network operation.
-func ValidateInput(in DeviceInput) error {
+// ValidateRegistration performs the cheap validation needed to save a device
+// record (the "Add device" flow: POST /api/v1/devices). It deliberately does
+// not require SNMP credentials or a timeout -- those are only meaningful for
+// an active SNMP probe (ValidateInput/TestSNMP below), and requiring them
+// here made every registration fail with "timeout must be positive" since
+// the registration form never collects them.
+func ValidateRegistration(in DeviceInput) error {
 	if strings.TrimSpace(in.OrganizationID) == "" { return fmt.Errorf("organization ID is required") }
 	if strings.TrimSpace(in.Name) == "" { return fmt.Errorf("device name is required") }
 	if net.ParseIP(strings.TrimSpace(in.Address)) == nil { return fmt.Errorf("address must be a valid IP address") }
+	return nil
+}
+
+// ValidateInput performs cheap validation before any network operation
+// (an active SNMP probe -- see TestSNMP). Unlike ValidateRegistration, this
+// requires SNMP credentials and a timeout, since those are used to actually
+// reach the device over the network.
+func ValidateInput(in DeviceInput) error {
+	if err := ValidateRegistration(in); err != nil { return err }
 	if in.SNMPPort == 0 { in.SNMPPort = 161 }
 	if in.Timeout <= 0 { return fmt.Errorf("timeout must be positive") }
 	if in.SNMP.Version != snmp.V2c && in.SNMP.Version != snmp.V3 { return fmt.Errorf("SNMP version must be 2c or 3") }
