@@ -181,7 +181,7 @@ func (a PreviewAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	password := DerivePassword(d.SerialNumber, a.Salt)
-	rendered, err := Render(tpl.ScriptBody, RenderData{Hostname: d.Name, Address: d.Address, Password: password})
+	rendered, err := Render(tpl.ScriptBody, RenderData{Hostname: d.Name, Address: d.Address, Password: password, SerialNumber: d.SerialNumber, Model: d.Model})
 	if err != nil {
 		http.Error(w, "failed to render template: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -234,7 +234,7 @@ func (a FetchAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	password := DerivePassword(d.SerialNumber, a.Salt)
-	rendered, err := Render(tpl.ScriptBody, RenderData{Hostname: d.Name, Address: d.Address, Password: password})
+	rendered, err := Render(tpl.ScriptBody, RenderData{Hostname: d.Name, Address: d.Address, Password: password, SerialNumber: d.SerialNumber, Model: d.Model})
 	if err != nil {
 		http.Error(w, "failed to render template", http.StatusInternalServerError)
 		return

@@ -10,10 +10,15 @@ const NAV = [
   { name: "Devices", href: "/devices", icon: "▣" },
   { name: "OLTs", href: "/olts", icon: "◈" },
   { name: "Incidents", href: "/incidents", icon: "⚠" },
+  { name: "Incident Hub", href: "/incident-hub", icon: "◉" },
+  { name: "Alert Rules", href: "/alert-rules", icon: "⚑" },
   { name: "Topology", href: "/topology", icon: "☷" },
   { name: "Syslog", href: "/syslog", icon: "☰" },
   { name: "SNMP Traps", href: "/traps", icon: "⚡" },
   { name: "MIBs", href: "/mibs", icon: "▤" },
+  { name: "Sites", href: "/sites", icon: "⌖" },
+  { name: "Access Points", href: "/access-points", icon: "◬" },
+  { name: "Customers", href: "/customers", icon: "◉" },
   { name: "Provisioning", href: "/provisioning", icon: "⚙" },
 ];
 

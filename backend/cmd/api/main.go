@@ -12,15 +12,20 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/accesspoints"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/alerts"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/alertsfeed"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/auth"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/customers"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/devices"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/discovery"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/incidents"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/metricsdb"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/mib"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/olt"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/ping"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/provisioning"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/sites"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/snmp"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/snmptrap"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/syslog"
@@ -66,6 +71,11 @@ func main() {
 	}
 
 	var oltRuntime *olt.RuntimeManager
+	var pingPoller *ping.Poller
+	var topologyEngine *topology.Discovery
+	var incidentEngine *incidents.Engine
+	var incidentStream *incidents.Stream
+	var alertEvaluator *alerts.Evaluator
 	var authHandler auth.Handler
 	if db != nil {
 		profiles := olt.DefaultProfileRegistry()
@@ -128,6 +138,29 @@ func main() {
 		deviceMetricsInterval := time.Duration(envInt("DEVICE_METRICS_INTERVAL_SECONDS", 60)) * time.Second
 		go devices.SamplePeriodically(ctx, devices.Repository{DB: db}, metricsdb.Repository{DB: db}, deviceMetricsInterval)
 		go pruneMetricsPeriodically(ctx, db)
+
+		// ICMP ping poller (the "pingmonitor" concept): probes every enabled
+		// device that has icmp_enabled=true via the system `ping` binary
+		// every PING_POLL_INTERVAL_SECONDS (default 30s), stores fine-grained
+		// history in ping_results and records icmp_* metric samples for the
+		// RTT sparklines on the device page. The existing TCP-only probing
+		// above remains the unprivileged default for devices with ICMP
+		// disabled.
+		pingRepo := ping.Repository{DB: db}
+		pingPoller = ping.New(pingRepo, metricsdb.Repository{DB: db})
+		pingPollInterval := time.Duration(envInt("PING_POLL_INTERVAL_SECONDS", 30)) * time.Second
+		go pingPoller.Run(ctx, pingPollInterval)
+		go prunePingResultsPeriodically(ctx, db)
+
+		// Sprint 1 — scheduled LLDP topology discovery. Walks the LLDP-MIB of
+		// every SNMP-enabled device every TOPOLOGY_DISCOVER_INTERVAL_SECONDS
+		// (default 15m = 900s), persists discovered links into topology_links,
+		// and records a graph snapshot. The topology page reads these links via
+		// GET /api/topology (now served from persistence instead of empty).
+		topologyEngine = topology.NewDiscovery(topology.Repository{DB: db})
+		topologyDiscInterval := time.Duration(envInt("TOPOLOGY_DISCOVER_INTERVAL_SECONDS", 900)) * time.Second
+		topologyEngine.Interval = topologyDiscInterval
+		go topologyEngine.Run(ctx)
 	}
 
 	mux := http.NewServeMux()
@@ -198,8 +231,10 @@ func main() {
 		// Incident lifecycle (open/acknowledge/resolve) and live SSE
 		// stream, as called by frontend/app/incidents/page.tsx and the
 		// (currently unmounted-in-the-UI) live-notification components.
-		incidentEngine := incidents.NewEngine()
-		incidentStream := incidents.NewStream()
+		// The engine + stream are hoisted to function scope so Sprint 2's
+		// alert evaluator can feed incidents into them.
+		incidentEngine = incidents.NewEngine()
+		incidentStream = incidents.NewStream()
 		incidentAPI := http.StripPrefix("/api", incidents.API{Engine: incidentEngine})
 		mux.Handle("GET /api/incidents", authHandler.Middleware(incidentAPI))
 		mux.Handle("GET /api/incidents/stream", authHandler.Middleware(incidentStream))
@@ -207,10 +242,36 @@ func main() {
 		mux.Handle("POST /api/incidents/", authHandler.Middleware(incidentAPI))
 
 		// Topology graph, as called by frontend/app/topology/page.tsx.
-		// Built from real registered inventory (devices + OLTs); links are
-		// empty until a scheduled LLDP discovery loop is wired up, rather
-		// than inventing connections that were never actually discovered.
-		mux.Handle("GET /api/topology", authHandler.Middleware(topology.API{Graph: topology.LiveGraph(db)}))
+		// Built from real registered inventory (devices + OLTs) with active
+		// links now sourced from the topology_links table, which the
+		// scheduled LLDP discovery loop (started above) keeps up to date.
+		topologyRepo := topology.Repository{DB: db}
+		mux.Handle("GET /api/topology", authHandler.Middleware(topology.GraphHandler{Repo: topologyRepo}))
+
+		// Sprint 1 topology administration: manual rediscovery, last-cycle
+		// status, and the 48h snapshot history for time-travel.
+		if topologyEngine != nil {
+			mux.Handle("POST /api/v1/topology/discover", authHandler.Middleware(topology.DiscoverHandler{Engine: topologyEngine}))
+			mux.Handle("GET /api/v1/topology/status", authHandler.Middleware(topology.StatusHandler{Engine: topologyEngine}))
+		}
+		mux.Handle("GET /api/v1/topology/snapshots", authHandler.Middleware(topology.SnapshotHandler{Repo: topologyRepo}))
+
+		// Sprint 2 — generic alert rules + AI incident hub. The previously
+		// dormant internal/alerts engine is now wired to persisted rules
+		// (alert_rules, migration 0016), real metric history, notification
+		// channels (0017), and the incident system above: fired alerts open
+		// incidents in incidentEngine + publish to incidentStream's SSE, get
+		// persisted with RCA into ai_incidents (0015) for the Incident Hub.
+		alertRepo := alerts.Repository{DB: db}
+		alertEvaluator = alerts.NewEvaluator(alertRepo, incidentEngine, incidentStream)
+		alertEvalInterval := time.Duration(envInt("ALERT_EVAL_INTERVAL_SECONDS", 60)) * time.Second
+		alertEvaluator.Interval = alertEvalInterval
+		go alertEvaluator.Run(ctx)
+		alertsAPI := alerts.API{Repo: alertRepo, Evaluator: alertEvaluator}
+		mux.Handle("GET /api/v1/alerts/", authHandler.Middleware(http.StripPrefix("/api/v1", alertsAPI)))
+		mux.Handle("POST /api/v1/alerts/", authHandler.Middleware(http.StripPrefix("/api/v1", alertsAPI)))
+		mux.Handle("PUT /api/v1/alerts/", authHandler.Middleware(http.StripPrefix("/api/v1", alertsAPI)))
+		mux.Handle("DELETE /api/v1/alerts/", authHandler.Middleware(http.StripPrefix("/api/v1", alertsAPI)))
 
 		// Recent syslog messages, as called by frontend/app/syslog/page.tsx.
 		// Registered under /api/v1 (not bare /api) to match apiFetch's
@@ -244,6 +305,28 @@ func main() {
 		// Per-device/OLT/ONU metric history, as called by the charts on
 		// frontend/app/devices/[id]/page.tsx and frontend/app/olts/[id]/page.tsx.
 		mux.Handle("GET /api/v1/metrics", authHandler.Middleware(metricsdb.API{Repo: metricsdb.Repository{DB: db}}))
+
+		// ICMP ping live/history/probe, powering the "Ping" tab on the device
+		// detail page (frontend/app/devices/[id]/page.tsx). Dispatched on the
+		// URL suffix like the OLT nested /alerts route above.
+		pingAPI := ping.API{Repo: ping.Repository{DB: db}, Devices: devicesRepo, Poller: pingPoller}
+		mux.Handle("GET /api/v1/ping/", authHandler.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case strings.HasSuffix(r.URL.Path, "/live"):
+				pingAPI.Live(w, r)
+			case strings.HasSuffix(r.URL.Path, "/history"):
+				pingAPI.History(w, r)
+			default:
+				http.NotFound(w, r)
+			}
+		})))
+		mux.Handle("POST /api/v1/ping/", authHandler.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/probe") {
+				pingAPI.Probe(w, r)
+				return
+			}
+			http.NotFound(w, r)
+		})))
 
 		// Subnet auto-discovery: scan a CIDR over SNMP, classify what
 		// responds, and one-click import selected hosts as devices, as
@@ -282,6 +365,31 @@ func main() {
 		mux.Handle("PUT /api/v1/devices/{id}/provisioning", authHandler.Middleware(provisioning.AssignAPI{Templates: provisioningRepo, Devices: devicesRepo}))
 		mux.Handle("GET /api/v1/devices/{id}/provisioning/preview", authHandler.Middleware(provisioning.PreviewAPI{Templates: provisioningRepo, Devices: devicesRepo, Salt: provisionSalt, BaseURL: provisionBaseURL, Token: provisionToken}))
 		mux.Handle("GET /api/v1/provision/routeros/{serial}", provisioning.FetchAPI{Templates: provisioningRepo, Devices: devicesRepo, Salt: provisionSalt, Token: provisionToken})
+
+		// Sprint 3 — ISP features: physical sites, wireless access points,
+		// and subscriber customer connections (migration 0018). Session-authed
+		// CRUD following the provisioning/templates idiom ({id} path vars).
+		sitesRepo := sites.Repository{DB: db}
+		mux.Handle("GET /api/v1/sites", authHandler.Middleware(sites.API{Repo: sitesRepo}))
+		mux.Handle("POST /api/v1/sites", authHandler.Middleware(sites.API{Repo: sitesRepo}))
+		mux.Handle("GET /api/v1/sites/{id}", authHandler.Middleware(sites.API{Repo: sitesRepo}))
+		mux.Handle("PUT /api/v1/sites/{id}", authHandler.Middleware(sites.API{Repo: sitesRepo}))
+		mux.Handle("DELETE /api/v1/sites/{id}", authHandler.Middleware(sites.API{Repo: sitesRepo}))
+
+		accessPointsRepo := accesspoints.Repository{DB: db}
+		mux.Handle("GET /api/v1/access-points", authHandler.Middleware(accesspoints.API{Repo: accessPointsRepo}))
+		mux.Handle("POST /api/v1/access-points", authHandler.Middleware(accesspoints.API{Repo: accessPointsRepo}))
+		mux.Handle("GET /api/v1/access-points/{id}", authHandler.Middleware(accesspoints.API{Repo: accessPointsRepo}))
+		mux.Handle("PUT /api/v1/access-points/{id}", authHandler.Middleware(accesspoints.API{Repo: accessPointsRepo}))
+		mux.Handle("DELETE /api/v1/access-points/{id}", authHandler.Middleware(accesspoints.API{Repo: accessPointsRepo}))
+
+		customersRepo := customers.Repository{DB: db}
+		mux.Handle("GET /api/v1/customers", authHandler.Middleware(customers.API{Repo: customersRepo}))
+		mux.Handle("POST /api/v1/customers", authHandler.Middleware(customers.API{Repo: customersRepo}))
+		mux.Handle("GET /api/v1/customers/{id}", authHandler.Middleware(customers.API{Repo: customersRepo}))
+		mux.Handle("PUT /api/v1/customers/{id}", authHandler.Middleware(customers.API{Repo: customersRepo}))
+		mux.Handle("DELETE /api/v1/customers/{id}", authHandler.Middleware(customers.API{Repo: customersRepo}))
+
 	} else {
 		unavailable := func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -318,6 +426,8 @@ func main() {
 		mux.HandleFunc("GET /api/v1/mibs/search", unavailable)
 		mux.HandleFunc("POST /api/v1/mibs/test", unavailable)
 		mux.HandleFunc("GET /api/v1/metrics", unavailable)
+		mux.HandleFunc("GET /api/v1/ping/", unavailable)
+		mux.HandleFunc("POST /api/v1/ping/", unavailable)
 		mux.HandleFunc("POST /api/v1/discovery/scan", unavailable)
 		mux.HandleFunc("GET /api/v1/discovery/scan/{id}", unavailable)
 		mux.HandleFunc("POST /api/v1/discovery/import", unavailable)
@@ -417,6 +527,24 @@ func pruneMetricsPeriodically(ctx context.Context, db *pgxpool.Pool) {
 				log.Printf("prune metric samples: %v", err)
 			} else if n > 0 {
 				log.Printf("pruned %d metric samples older than %s", n, retention)
+			}
+		}
+	}
+}
+func prunePingResultsPeriodically(ctx context.Context, db *pgxpool.Pool) {
+	ticker := time.NewTicker(6 * time.Hour)
+	defer ticker.Stop()
+	const retention = 7 * 24 * time.Hour
+	repo := ping.Repository{DB: db}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if n, err := repo.PruneOlderThan(ctx, retention); err != nil {
+				log.Printf("prune ping results: %v", err)
+			} else if n > 0 {
+				log.Printf("pruned %d ping results older than %s", n, retention)
 			}
 		}
 	}

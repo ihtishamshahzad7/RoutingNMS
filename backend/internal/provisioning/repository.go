@@ -95,9 +95,11 @@ func (r Repository) Delete(ctx context.Context, id int64) error {
 
 // RenderData is what a provisioning template can reference.
 type RenderData struct {
-	Hostname string
-	Address  string
-	Password string
+	Hostname     string
+	Address      string
+	Password     string
+	SerialNumber string
+	Model        string
 }
 
 // Render executes a template's script body against a device's data.
