@@ -23,9 +23,14 @@ CREATE TABLE IF NOT EXISTS tenants (
     webhook_url TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (slug),
-    UNIQUE (api_key) WHERE api_key <> ''
+    UNIQUE (slug)
 );
+
+-- Partial unique index on non-empty api_key. Postgres does not allow a WHERE
+-- clause inside CREATE TABLE's inline UNIQUE constraint, so it must live here.
+-- Index name must be stable and unique to guarantee idempotency.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tenants_api_key_not_empty
+    ON tenants (api_key) WHERE api_key <> '';
 
 -- Audit log: every write operation (create/update/delete/login/logout/
 -- provision/ack_alert) across the system.
