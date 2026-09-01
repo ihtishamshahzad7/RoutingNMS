@@ -95,11 +95,28 @@ only mobile push notifications from Sprint 3 remain and they wait on the mobile 
       (PreviewAPI + FetchAPI). ⚠ static review passed; not yet `go build` verified.
 - [ ] Mobile push notifications (waits on Expo mobile client)
 
-### Sprint 4 — Hardening
-- [ ] Multi-tenancy (Tenant model + API-key auth)
+### Sprint 4 — Hardening (in progress)
+- [x] NOC AI assistant (`backend/internal/assistant`): `POST /api/v1/ai/assistant`
+      answers deterministically from live backend state (alertsfeed active alerts +
+      `ai_incidents` + device count); intent routing (device_down / incidents /
+      summary). Wired in `main.go` behind auth + unavailable fallback. Chat widget
+      (`components/ui/ai-chat-widget.tsx`) posts to it; local fallback when offline.
+- [x] Top bar live alerts: `GET /api/v1/alerts/active` polled into the Zustand
+      store (`lib/stores/alerts.ts`) → badge count = critical+warning open alerts.
+- [x] Frontend↔backend sync: `apiFetch` now passes legacy `/api/*` paths through;
+      all pages standardized on `apiFetch` (mibs file upload intentionally stays raw
+      fetch for multipart). Incident-hub (Screen 4 RCA), alert-rules (Screen 3
+      builder), topology (new D3 force canvas `components/topology-force.tsx`,
+      old `topology-canvas.tsx` left unused) restyled onto the design system.
+      Verified: `next build` green, 18 routes.
+- [ ] Multi-tenancy (Tenant model + API-key auth) — migration 0019 fixed (partial
+      unique index out of CREATE TABLE) pushed as `a3bb1e7`; schema not yet applied
+      on server.
 - [ ] Audit log middleware
 - [ ] Redis caching + pgvector similarity for AI incidents
 - [ ] Load test; mobile polish/release
+- [ ] Light token pass still pending on: sites, access-points, customers, syslog,
+      traps, mibs, provisioning, devices/[id], incidents, olts/[id]
 
 ### Gap map (prompt feature → current state)
 - **AI incidents/RCA**: DONE (Sprint 2) but heuristic-only. `ai_incidents` (0015) is the
