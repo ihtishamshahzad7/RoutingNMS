@@ -38,7 +38,7 @@ func (a Adapter) Poll(ctx context.Context, target snmp.Target) (Result, error) {
     result := Result{}
     for _, pdu := range response.Variables {
         value := number(pdu.Value)
-        switch pdu.Name { case OIDCPU: result.CPUPercent=value; case OIDMemory: result.MemoryTotalBytes=value; case OIDFreeMem: result.MemoryFreeBytes=value; case OIDTemp: result.TemperatureC=value }
+        switch pdu.Name { case OIDCPU: result.CPUPercent=value; case OIDMemory: result.MemoryTotalBytes=uint64(value); case OIDFreeMem: result.MemoryFreeBytes=uint64(value); case OIDTemp: result.TemperatureC=value }
     }
     return result, nil
 }
