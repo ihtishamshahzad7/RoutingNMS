@@ -12,7 +12,122 @@
 @source "../app";
 @source "../components";
 
-* { box-sizing: border-box; }
-html, body { margin: 0; min-height: 100%; }
-body { background: #07111f; color: #e7eef7; font-family: Arial, Helvetica, sans-serif; }
-a { color: inherit; text-decoration: none; }
+/*
+ * Design tokens — "GitHub-dark infrastructure meets Grafana NOC".
+ * Every color below maps to a Tailwind utility (bg-bg-page, text-status-up, …)
+ * and to a CSS variable (--color-status-up, …). Typography uses the Inter and
+ * JetBrains Mono variables loaded from next/font in app/layout.tsx and falls
+ * back to a system stack.
+ */
+@theme {
+  /* Surfaces */
+  --color-bg-page: #0d1117;
+  --color-bg-surface: #161b22;
+  --color-bg-raised: #1c2128;
+
+  /* Borders */
+  --color-border: #21262d;
+  --color-border-strong: #30363d;
+
+  /* Text */
+  --color-text-primary: #e6edf3;
+  --color-text-muted: #8b949e;
+  --color-text-ghost: #484f58;
+
+  /* Status */
+  --color-status-up: #3fb950;
+  --color-status-warn: #d29922;
+  --color-status-crit: #f78166;
+  --color-status-info: #58a6ff;
+  --color-status-ai: #a371f7;
+
+  /* Glows */
+  --color-glow-up: rgba(63, 185, 80, 0.2);
+  --color-glow-crit: rgba(247, 129, 102, 0.2);
+
+  /* Semantic button / badge fills */
+  --color-btn-primary: #238636;
+  --color-btn-primary-border: #2ea043;
+  --color-btn-secondary: #21262d;
+  --color-danger-bg: #2d1212;
+  --color-danger-border: #672525;
+
+  /* Fonts */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, "SFMono-Regular", monospace;
+
+  /* Spacing is Tailwind's default 4px grid; radii below are design tokens. */
+  --radius-xs: 4px;
+  --radius-sm: 5px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-pill: 20px;
+}
+
+@layer base {
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    background: var(--color-bg-page);
+    color: var(--color-text-primary);
+    font-family: var(--font-sans);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  a { color: inherit; text-decoration: none; }
+}
+
+@layer components {
+  /* ── Status dots ─────────────────────────────────────────────── */
+  .dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+  }
+  .dot-up { background: var(--color-status-up); box-shadow: 0 0 6px rgba(63, 185, 80, 0.4); }
+  .dot-warn { background: var(--color-status-warn); box-shadow: 0 0 6px rgba(210, 153, 34, 0.4); }
+  .dot-crit { background: var(--color-status-crit); box-shadow: 0 0 6px rgba(247, 129, 102, 0.4); }
+  .dot-unknown { background: var(--color-text-muted); }
+  .dot-pulse { animation: dot-pulse 2s ease-in-out infinite; }
+
+  @keyframes dot-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* ── Labels ──────────────────────────────────────────────────── */
+  .label {
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--color-text-ghost);
+  }
+
+  /* ── Table styling ───────────────────────────────────────────── */
+  .tbl th {
+    background: var(--color-bg-surface);
+    font-family: var(--font-sans);
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--color-text-ghost);
+    text-align: left;
+    padding: 7px 10px;
+  }
+  .tbl td { padding: 7px 10px; border-bottom: 1px solid var(--color-bg-surface); }
+  .tbl tr:hover td { background: var(--color-bg-surface); }
+
+  /* ── Monospace values / code / IPs ───────────────────────────── */
+  .mono { font-family: var(--font-mono); font-size: 11px; color: var(--color-status-info); }
+
+  /* ── Alert slide-in (new alert) ──────────────────────────────── */
+  @keyframes alert-slide-in {
+    from { transform: translateY(-100%); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+  .alert-enter { animation: alert-slide-in 200ms ease; }
+}
