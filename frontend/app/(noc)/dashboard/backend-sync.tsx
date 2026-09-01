@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { apiFetch, ApiError } from "../../../lib/api";
 
 type Check = { name: string; path: string; ok: boolean; detail: string; href?: string };
 
@@ -21,9 +22,12 @@ export default function BackendSync() {
       ] as const;
       const results = await Promise.all(endpoints.map(async ([name, path]) => {
         try {
-          const response = await fetch(path, { cache: "no-store" });
-          return { name, path, ok: response.ok || response.status === 401, detail: response.status === 401 ? "Protected endpoint reachable" : `${response.status} ${response.statusText}` };
-        } catch {
+          await apiFetch(path);
+          return { name, path, ok: true, detail: "200 OK" };
+        } catch (e) {
+          if (e instanceof ApiError) {
+            return { name, path, ok: e.status === 401, detail: e.status === 401 ? "Protected endpoint reachable" : `HTTP ${e.status} ${e.message}` };
+          }
           return { name, path, ok: false, detail: "Connection failed" };
         }
       }));

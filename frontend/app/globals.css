@@ -106,6 +106,21 @@
     color: var(--color-text-ghost);
   }
 
+  /* ── Form inputs / selects ───────────────────────────────────── */
+  .input {
+    background: var(--color-bg-page);
+    border: 1px solid var(--color-border-strong);
+    color: var(--color-text-primary);
+    border-radius: 5px;
+    padding: 7px 10px;
+    font-size: 12px;
+    font-family: var(--font-sans);
+    outline: none;
+    transition: border-color 120ms;
+  }
+  .input::placeholder { color: var(--color-text-ghost); }
+  .input:focus { border-color: var(--color-status-info); }
+
   /* ── Table styling ───────────────────────────────────────────── */
   .tbl th {
     background: var(--color-bg-surface);

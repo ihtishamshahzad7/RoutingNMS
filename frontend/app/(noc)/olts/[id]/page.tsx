@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { apiFetch } from '../../../../lib/api'
 import { MetricChart } from '../../../../components/metric-chart'
 
 type ONU={id:string;name:string;serial:string;status:string;rxPowerDbm?:number;txPowerDbm?:number;los?:boolean}
@@ -14,7 +15,18 @@ const badge=(value:string)=>value==='critical'?'bg-red-950 text-red-300 border-r
 
 export default function OLTDetail({params}:OLTDetailProps){
  const [id,setId]=useState(''),[data,setData]=useState<Hierarchy|null>(null),[runtime,setRuntime]=useState<RuntimeState|null>(null),[alerts,setAlerts]=useState<Alert[]>([]),[error,setError]=useState(''),[filter,setFilter]=useState('all'),[busy,setBusy]=useState(true),[expandedOnu,setExpandedOnu]=useState<string|null>(null)
- useEffect(()=>{let live=true;const load=async()=>{try{const p=await params;if(live)setId(p.id);const [h,rt,a]=await Promise.all([fetch(`/api/olts/${encodeURIComponent(p.id)}`,{cache:'no-store'}),fetch('/api/v1/olt/runtime',{cache:'no-store'}),fetch(`/api/v1/olts/${encodeURIComponent(p.id)}/alerts?limit=50`,{cache:'no-store'})]);if(!h.ok)throw Error('OLT not found');const hj=await h.json();const rj=rt.ok?await rt.json():{olts:[]};const aj=a.ok?await a.json():[];if(live){setData(hj);setRuntime((rj.olts||[]).find((x:RuntimeState)=>x.oltId===p.id)||null);setAlerts(Array.isArray(aj)?aj:[]);setError('')}}catch(e){if(live)setError(e instanceof Error?e.message:'Unable to load OLT')}finally{if(live)setBusy(false)}};load();const t=setInterval(load,15000);return()=>{live=false;clearInterval(t)}},[params])
+ useEffect(()=>{let live=true;const load=async()=>{try{const p=await params;if(live)setId(p.id);
+    const safeJson=async(path:string):Promise<unknown|null>=>{try{return await apiFetch(path)}catch{return null}};
+    const [h,rt,a]=await Promise.all([
+      safeJson(`/api/olts/${encodeURIComponent(p.id)}`),
+      safeJson('/olt/runtime'),
+      safeJson(`/olts/${encodeURIComponent(p.id)}/alerts?limit=50`),
+    ]);
+    const hj=h as Hierarchy|null;
+    if(!hj)throw Error('OLT not found');
+    const rj=(rt&&typeof rt==='object'&&'olts' in rt?(rt as {olts:RuntimeState[]}).olts:[])||[];
+    const aj=Array.isArray(a)?a as Alert[]:[];
+    if(live){setData(hj);setRuntime(rj.find((x:RuntimeState)=>x.oltId===p.id)||null);setAlerts(aj);setError('')}}catch(e){if(live)setError(e instanceof Error?e.message:'Unable to load OLT')}finally{if(live)setBusy(false)}};load();const t=setInterval(load,15000);return()=>{live=false;clearInterval(t)}},[params])
  const onus=useMemo(()=>data?.pons.flatMap(p=>p.onus.map(o=>({...o,pon:p.port}))).filter(o=>filter==='all'||o.status===filter)||[],[data,filter])
  const total=data?.pons.reduce((n,p)=>n+p.onus.length,0)||0
  const online=data?.pons.reduce((n,p)=>n+p.onus.filter(o=>o.status==='online').length,0)||0

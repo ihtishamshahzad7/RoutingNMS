@@ -15,6 +15,7 @@ import (
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/accesspoints"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/alerts"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/alertsfeed"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/assistant"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/auth"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/customers"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/devices"
@@ -390,6 +391,12 @@ func main() {
 		mux.Handle("PUT /api/v1/customers/{id}", authHandler.Middleware(customers.API{Repo: customersRepo}))
 		mux.Handle("DELETE /api/v1/customers/{id}", authHandler.Middleware(customers.API{Repo: customersRepo}))
 
+		// Sprint 4 — NOC AI assistant (Screen 5 chat widget): deterministic,
+		// backend-grounded answers built from the live active alert feed +
+		// durable AI incidents. No external model at runtime.
+		assistantRepo := assistant.Repository{DB: db}
+		mux.Handle("POST /api/v1/ai/assistant", authHandler.Middleware(assistant.API{Repo: assistantRepo}))
+
 	} else {
 		unavailable := func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -440,6 +447,7 @@ func main() {
 		mux.HandleFunc("PUT /api/v1/devices/{id}/provisioning", unavailable)
 		mux.HandleFunc("GET /api/v1/devices/{id}/provisioning/preview", unavailable)
 		mux.HandleFunc("GET /api/v1/provision/routeros/{serial}", unavailable)
+		mux.HandleFunc("POST /api/v1/ai/assistant", unavailable)
 	}
 
 	srv := &http.Server{Addr: ":" + port, Handler: securityHeaders(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}

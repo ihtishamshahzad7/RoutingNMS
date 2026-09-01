@@ -2,27 +2,31 @@
 
 // Screen 5 — AI Chat Widget. Floating #A371F7 bubble (bottom-right) that
 // opens a 380x520 panel. Supports user/AI message bubbles, a typing indicator
-// and suggested prompts. No chat API exists in the Go backend yet, so the AI
-// replies with a small local echo / status response — the widget is a UI
-// surface that can be pointed at a real chat endpoint later without changing
-// the component contract.
+// and suggested prompts. Live answers come from the Go backend's
+// POST /api/v1/ai/assistant (internal/assistant), which answers deterministically
+// from real backend state (active alerts, incidents, device inventory). When
+// the API is unreachable (offline / no session) the widget falls back to a
+// small local reply so the surface never dead-ends.
 import { useEffect, useRef, useState } from "react";
 import { Bot, Send, X } from "lucide-react";
+import { apiFetch } from "../../lib/api";
 
 type Msg = { role: "user" | "ai"; text: string };
+type AiReply = { message: string; intent: string; sources?: string[]; updatedAt?: string };
 
 const SUGGESTED = [
   "Which devices are down right now?",
   "Summarize today's incidents",
-  "Top latency offenders",
+  "What's the status of the NOC?",
   "Explain the last critical alert",
 ];
 
-function aiReply(text: string): string {
+// Local fallback used only when POST /api/v1/ai/assistant cannot be reached.
+function localReply(text: string): string {
   const t = text.toLowerCase();
   if (t.includes("down")) return "No devices are currently reported as fully down. The network is nominal across all sites.";
   if (t.includes("incident")) return "Today: 3 incidents total — 1 resolved, 2 acknowledged. The most recent was a link flap on core-sw-02.";
-  if (t.includes("latency")) return "Gateways with the highest avg RTT: BRAS-01 (18ms), access-04 (14ms). All within tolerance.";
+  if (t.includes("status") || t.includes("summary") || t.includes("health")) return "Live NOC status: 24 devices monitored, 2 active alerts, 1 open incident. Select a suggestion below for more detail.";
   if (t.includes("critical")) return "The last critical alert (INC-1042) was a MikroTik CPU spike on edge-01; root cause: port scan storm. Now recovered.";
   return "I can help summarize incidents, list down devices, or profile latency. Select a suggestion below or ask a network question.";
 }
@@ -40,16 +44,24 @@ export function AiChatWidget() {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [msgs, typing, open]);
 
-  function send(text: string) {
+  async function send(text: string) {
     const q = text.trim();
     if (!q || typing) return;
     setMsgs((m) => [...m, { role: "user", text: q }]);
     setInput("");
     setTyping(true);
-    setTimeout(() => {
-      setMsgs((m) => [...m, { role: "ai", text: aiReply(q) }]);
+    try {
+      const reply = await apiFetch<AiReply>("/ai/assistant", {
+        method: "POST",
+        body: JSON.stringify({ message: q }),
+      });
+      setMsgs((m) => [...m, { role: "ai", text: reply.message }]);
+    } catch {
+      // Backend offline / no session: answer locally so the widget still works.
+      setMsgs((m) => [...m, { role: "ai", text: localReply(q) + "  (local fallback — backend unreachable)" }]);
+    } finally {
       setTyping(false);
-    }, 900);
+    }
   }
 
   return (

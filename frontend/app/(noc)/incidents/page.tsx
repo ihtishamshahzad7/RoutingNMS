@@ -1,15 +1,16 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { apiFetch } from '../../../lib/api'
 
 type Incident={id:string;status:string;severity:string;title:string;source:string;resourceId:string;startedAt:string;acknowledgedAt?:string;resolvedAt?:string}
 
 export default function IncidentsPage(){
  const [items,setItems]=useState<Incident[]>([]); const [status,setStatus]=useState(''); const [severity,setSeverity]=useState(''); const [loading,setLoading]=useState(true)
- const load=async()=>{setLoading(true); try{const q=new URLSearchParams(); if(status)q.set('status',status);if(severity)q.set('severity',severity);const r=await fetch(`/api/incidents?${q}`); if(r.ok)setItems(await r.json())}finally{setLoading(false)}}
+ const load=async()=>{setLoading(true); try{const q=new URLSearchParams(); if(status)q.set('status',status);if(severity)q.set('severity',severity);setItems(await apiFetch<Incident[]>(`/api/incidents?${q}`))}catch{/* keep last list */}finally{setLoading(false)}}
  useEffect(()=>{load()},[status,severity])
  const counts=useMemo(()=>({critical:items.filter(i=>i.severity==='critical'&&i.status!=='resolved').length,open:items.filter(i=>i.status==='open').length,ack:items.filter(i=>i.status==='acknowledged').length}),[items])
- const action=async(id:string,a:'acknowledge'|'resolve')=>{await fetch(`/api/incidents/${encodeURIComponent(id)}/${a}`,{method:'POST'});load()}
+ const action=async(id:string,a:'acknowledge'|'resolve')=>{await apiFetch(`/api/incidents/${encodeURIComponent(id)}/${a}`,{method:'POST'});load()}
  return <main className="min-h-screen p-6 md:p-8 space-y-6"><header><p className="text-xs font-semibold uppercase tracking-[.2em] text-muted-foreground">Network Operations Center</p><h1 className="text-3xl font-bold tracking-tight">Incidents</h1><p className="text-muted-foreground">Live operational events requiring attention.</p></header>
  <section className="grid grid-cols-1 sm:grid-cols-3 gap-4"><Card label="Critical" value={counts.critical}/><Card label="Open" value={counts.open}/><Card label="Acknowledged" value={counts.ack}/></section>
  <section className="flex flex-wrap gap-3"><select className="rounded-lg border bg-background px-3 py-2" value={status} onChange={e=>setStatus(e.target.value)}><option value="">All statuses</option><option value="open">Open</option><option value="acknowledged">Acknowledged</option><option value="resolved">Resolved</option></select><select className="rounded-lg border bg-background px-3 py-2" value={severity} onChange={e=>setSeverity(e.target.value)}><option value="">All severities</option><option value="critical">Critical</option><option value="warning">Warning</option><option value="info">Info</option></select></section>

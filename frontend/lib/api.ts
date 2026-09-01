@@ -18,9 +18,14 @@ export class ApiError extends Error {
 }
 
 /**
- * Calls a RoutingNMS API endpoint under /api/v1 and returns the parsed JSON
- * body. Always sends the session cookie (`credentials: "include"`) so
- * authenticated requests work the same from any page.
+ * Calls a RoutingNMS API endpoint and returns the parsed JSON body. Always
+ * sends the session cookie (`credentials: "include"`) so authenticated
+ * requests work the same from any page.
+ *
+ * `path` is relative to /api/v1 (e.g. "/alerts/active"), except legacy routes
+ * that live directly under /api (e.g. "/api/olts/...", "/api/topology",
+ * "/api/incidents") — pass those with the full "/api/..." prefix and they are
+ * used as-is.
  *
  * Throws ApiError for a reachable-but-unsuccessful response (4xx/5xx), and a
  * plain Error (network failure) when the backend cannot be reached at all —
@@ -28,7 +33,8 @@ export class ApiError extends Error {
  * vs. "the API is offline").
  */
 export async function apiFetch<T = unknown>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
+  const resolved = path.startsWith("/api/") ? path : `${API_BASE}${path}`;
+  const response = await fetch(resolved, {
     ...init,
     credentials: "include",
     headers: {

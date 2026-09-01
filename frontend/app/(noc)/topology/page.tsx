@@ -1,29 +1,132 @@
-'use client'
+"use client";
 
-import { useEffect, useMemo, useState } from 'react'
-import { TopologyCanvas } from '../../../components/topology-canvas'
+// Screen — Topology. Restyled onto the GitHub-dark design system + new D3
+// force-directed canvas (components/topology-force.tsx). Data still comes
+// from the real backend: persisted graph (/api/topology), discovery status
+// and manual rediscovery (/api/v1/topology/*), synced via apiFetch.
+import { useEffect, useMemo, useState } from "react";
+import { apiFetch } from "../../../lib/api";
+import { Card, StatCard } from "../../../components/ui/card";
+import { Button } from "../../../components/ui/primitives";
+import { StatusPill } from "../../../components/ui/status-pill";
+import { TopologyForce, type TopoNode, type TopoLink } from "../../../components/topology-force";
 
-type Node={id:string;name:string;type:string;address?:string;health:number}
-type Link={id:string;source:string;target:string;status:string;latencyMs?:number;packetLossPct?:number}
-type Graph={nodes:Node[];links:Link[];generatedAt:string}
-type DiscoveryStatus={lastRun?:string;lastError?:string;links?:number;nodes?:number;running?:boolean;interval?:number}
+type Graph = { nodes: TopoNode[]; links: TopoLink[]; generatedAt: string };
+type DiscoveryStatus = { lastRun?: string; lastError?: string; links?: number; nodes?: number; running?: boolean; interval?: number };
 
-export default function TopologyPage(){
- const [graph,setGraph]=useState<Graph>({nodes:[],links:[],generatedAt:''})
- const [status,setStatus]=useState<DiscoveryStatus>({})
- const [error,setError]=useState('')
- const [discovering,setDiscovering]=useState(false)
+export default function TopologyPage() {
+  const [graph, setGraph] = useState<Graph>({ nodes: [], links: [], generatedAt: "" });
+  const [status, setStatus] = useState<DiscoveryStatus>({});
+  const [error, setError] = useState("");
+  const [discovering, setDiscovering] = useState(false);
 
- const loadStatus=async()=>{try{const r=await fetch('/api/v1/topology/status',{cache:'no-store'});if(r.ok)setStatus(await r.json())}catch{}}
+  const loadStatus = async () => {
+    try { setStatus(await apiFetch<DiscoveryStatus>("/topology/status")); } catch { /* keep last */ }
+  };
+  const load = async () => {
+    try {
+      const data = await apiFetch<Graph>("/api/topology");
+      setGraph(data); setError("");
+    } catch (e) { setError(e instanceof Error ? e.message : "Topology unavailable"); }
+  };
 
- const load=async()=>{try{const r=await fetch('/api/topology',{cache:'no-store'});if(!r.ok)throw new Error('Unable to load topology');setGraph(await r.json());setError('')}catch(e){setError(e instanceof Error?e.message:'Topology unavailable')}}
- useEffect(()=>{let live=true;const run=async()=>{await Promise.all([load(),loadStatus()])};run();const t=setInterval(()=>{if(live){load();loadStatus()}},10000);return()=>{live=false;clearInterval(t)}},[])
+  useEffect(() => {
+    let live = true;
+    const run = async () => { await Promise.all([load(), loadStatus()]); };
+    run();
+    const t = setInterval(() => { if (live) { load(); loadStatus(); } }, 10000);
+    return () => { live = false; clearInterval(t); };
+  }, []);
 
- const rediscover=async()=>{setDiscovering(true);try{await fetch('/api/v1/topology/discover',{method:'POST',cache:'no-store'});await Promise.all([load(),loadStatus()])}catch{}finally{setDiscovering(false)}}
+  const rediscover = async () => {
+    setDiscovering(true);
+    try {
+      await apiFetch("/topology/discover", { method: "POST" });
+      await Promise.all([load(), loadStatus()]);
+    } catch { /* engine may already be running */ }
+    finally { setDiscovering(false); }
+  };
 
- const stats=useMemo(()=>({up:graph.links.filter(x=>x.status==='up').length,down:graph.links.filter(x=>x.status==='down').length,degraded:graph.links.filter(x=>x.status==='degraded').length}),[graph.links])
+  const stats = useMemo(() => ({
+    up: graph.links.filter(x => x.status === "up").length,
+    down: graph.links.filter(x => x.status === "down").length,
+    degraded: graph.links.filter(x => x.status === "degraded").length,
+  }), [graph.links]);
 
- return <main className="min-h-screen p-6 md:p-8 space-y-6"><header><p className="text-xs font-semibold uppercase tracking-[.2em] text-muted-foreground">Network Operations Center</p><h1 className="text-3xl font-bold tracking-tight">Topology</h1><p className="text-muted-foreground">Discovered network relationships and link health.</p></header><section className="grid grid-cols-2 md:grid-cols-4 gap-4"><Card label="Devices" value={graph.nodes.length}/><Card label="Links" value={graph.links.length}/><Card label="Up" value={stats.up}/><Card label="Issues" value={stats.down+stats.degraded}/></section>{error&&<div className="rounded-xl border p-4 text-sm">{error}</div>}<section className="rounded-xl border p-5 space-y-4"><div className="flex items-center justify-between flex-wrap gap-3"><div className="space-y-1"><h2 className="font-semibold">Live topology</h2><div className="text-xs text-muted-foreground flex items-center gap-4 flex-wrap">{status.running?<span className="inline-flex items-center gap-1"><span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500"/><span>Discovery running</span></span>:<span>Auto-refresh: 10s</span>}{status.lastRun&&<span>Last discovery {timeAgo(status.lastRun)}</span>}{typeof status.links==='number'&&<span>{status.links} links found</span>}</div></div><button onClick={rediscover} disabled={discovering||status.running} className="rounded-lg border border-input bg-background px-3 py-1.5 text-sm font-medium hover:bg-accent disabled:opacity-50">{discovering?'Discovering…':'Rediscover now'}</button></div><TopologyCanvas nodes={graph.nodes} links={graph.links}/></section><section className="rounded-xl border overflow-hidden"><div className="p-5 font-semibold">Discovered links</div><div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-muted/40"><tr><th className="text-left p-4">Source</th><th className="text-left p-4">Target</th><th className="text-left p-4">Status</th><th className="text-left p-4">Latency</th><th className="text-left p-4">Loss</th></tr></thead><tbody>{graph.links.map(l=><tr key={l.id} className="border-t"><td className="p-4 font-mono text-xs">{l.source}</td><td className="p-4 font-mono text-xs">{l.target}</td><td className="p-4 capitalize">{l.status}</td><td className="p-4">{l.latencyMs??0} ms</td><td className="p-4">{l.packetLossPct??0}%</td></tr>)}</tbody></table></div></section></main>
+  return (
+    <main className="mx-auto max-w-7xl px-6 py-6">
+      <div className="mb-6">
+        <div className="label text-[#8B949E]">Network Map</div>
+        <h1 className="mt-1 text-[22px] font-bold tracking-[-0.5px] text-[#E6EDF3]">Topology</h1>
+        <p className="mt-1 text-xs text-[#8B949E]">Discovered network relationships and link health (LLDP discovery + ICMP probe results).</p>
+      </div>
+
+      <div className="mb-6 grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <StatCard label="Devices" value={graph.nodes.length} accent="text-[#58A6FF]" sub="Nodes in persisted graph" />
+        <StatCard label="Links" value={graph.links.length} accent="text-[#58A6FF]" sub="LLDP-discovered edges" />
+        <StatCard label="Up" value={stats.up} accent="text-[#3FB950]" sub="Healthy links" />
+        <StatCard label="Issues" value={stats.down + stats.degraded} accent={stats.down + stats.degraded ? "text-[#F78166]" : "text-[#3FB950]"} sub="Down / degraded links" />
+      </div>
+
+      {error && <div className="mb-4 rounded-[5px] border border-[#672525] bg-[#2D1212] p-3 text-xs text-[#F78166]">{error}</div>}
+
+      <Card title="Live topology" headerRight={
+        <Button variant="secondary" onClick={rediscover} disabled={discovering || status.running}>
+          {discovering ? "Discovering…" : "Rediscover now"}
+        </Button>
+      } className="mb-6">
+        <div className="flex flex-wrap items-center gap-4 border-b border-[#21262D] px-4 py-2.5 text-[10px] text-[#8B949E]">
+          {status.running
+            ? <span className="inline-flex items-center gap-1.5"><span className="dot dot-up dot-pulse" /><span className="text-[#3FB950]">Discovery running</span></span>
+            : <span>Auto-refresh: 10s</span>}
+          {status.lastRun && <span>Last discovery {timeAgo(status.lastRun)}</span>}
+          {typeof status.links === "number" && <span>{status.links} links found</span>}
+          {typeof status.nodes === "number" && <span>{status.nodes} nodes found</span>}
+          {status.lastError && <span className="text-[#F78166]">Error: {status.lastError}</span>}
+        </div>
+        <div className="p-4">
+          <TopologyForce nodes={graph.nodes} links={graph.links} />
+        </div>
+      </Card>
+
+      <Card title={`Discovered links (${graph.links.length})`}>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs text-[#C9D1D9]">
+            <thead>
+              <tr className="border-b border-[#21262D] text-[#8B949E]">
+                <th className="px-4 py-2.5 font-medium">Source</th>
+                <th className="px-4 py-2.5 font-medium">Target</th>
+                <th className="px-4 py-2.5 font-medium">Status</th>
+                <th className="px-4 py-2.5 font-medium">Latency</th>
+                <th className="px-4 py-2.5 font-medium">Loss</th>
+              </tr>
+            </thead>
+            <tbody>
+              {graph.links.map(l => (
+                <tr key={l.id} className="border-b border-[#1c2128]">
+                  <td className="px-4 py-3 font-mono text-[#8B949E]">{l.source}</td>
+                  <td className="px-4 py-3 font-mono text-[#8B949E]">{l.target}</td>
+                  <td className="px-4 py-3"><StatusPill status={l.status} label={l.status} pulse={l.status === "down"} /></td>
+                  <td className="px-4 py-3 text-[#8B949E]">{l.latencyMs ?? 0} ms</td>
+                  <td className="px-4 py-3 text-[#8B949E]">{l.packetLossPct ?? 0}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </main>
+  );
 }
-function Card({label,value}:{label:string;value:number}){return <div className="rounded-xl border p-5"><div className="text-sm text-muted-foreground">{label}</div><div className="mt-2 text-3xl font-bold">{value}</div></div>}
-function timeAgo(iso:string){try{const d=+new Date(iso);if(!d)return '';const s=Math.max(0,Math.floor((Date.now()-d)/1000));if(s<5)return 'just now';if(s<60)return `${s}s ago`;if(s<3600)return `${Math.floor(s/60)}m ago`;return `${Math.floor(s/3600)}h ago`}catch{return ''}}
+
+function timeAgo(iso: string) {
+  try {
+    const d = +new Date(iso);
+    if (!d) return "";
+    const s = Math.max(0, Math.floor((Date.now() - d) / 1000));
+    if (s < 5) return "just now";
+    if (s < 60) return `${s}s ago`;
+    if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+    return `${Math.floor(s / 3600)}h ago`;
+  } catch { return ""; }
+}
