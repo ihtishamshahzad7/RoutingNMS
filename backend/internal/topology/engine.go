@@ -97,11 +97,11 @@ func (d *Discovery) DiscoverNow(ctx context.Context) (int, error) {
 	return d.discoverOnce(ctx)
 }
 
-func (d *Discovery) discoverOnce(ctx context.Context) int {
+func (d *Discovery) discoverOnce(ctx context.Context) (int, error) {
 	d.mu.Lock()
 	if d.running {
 		d.mu.Unlock()
-		return d.lastLink
+		return d.lastLink, nil
 	}
 	d.running = true
 	d.mu.Unlock()
@@ -138,7 +138,7 @@ func (d *Discovery) discoverOnce(ctx context.Context) int {
 			log.Printf("topology discovery: store snapshot: %v", err)
 		}
 	}
-	return len(links)
+	return len(links), err
 }
 
 // collect walks the LLDP-MIB of every SNMP-enabled device (concurrently, with

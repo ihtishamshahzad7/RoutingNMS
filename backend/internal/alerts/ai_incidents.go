@@ -264,8 +264,5 @@ func (b IncidentBridge) Open(ctx context.Context, a Alert) (AiIncident, error) {
 }
 
 func incidentTitle(a Alert) string {
-	if a.Title != "" {
-		return a.Title
-	}
 	return "Alert " + a.RuleKey + " breached on " + a.DeviceID
 }

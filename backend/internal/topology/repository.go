@@ -239,7 +239,8 @@ func (r Repository) StoreSnapshot(ctx context.Context, g Graph) error {
 		VALUES ($1,$2,$3,$4)`, g.GeneratedAt, len(g.Nodes), len(g.Links), raw); err != nil {
 		return err
 	}
-	return r.PruneSnapshotsOlderThan(ctx, 48*time.Hour)
+	_, err = r.PruneSnapshotsOlderThan(ctx, 48*time.Hour)
+	return err
 }
 
 // ListSnapshots returns the `limit` most recent snapshots, newest first.
