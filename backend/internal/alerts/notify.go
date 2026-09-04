@@ -67,6 +67,8 @@ func (n Notifier) dispatch(client *http.Client, ch PersistedChannel, title, body
 		err = sendPagerDuty(ctx, client, ch, title, message, severity)
 	case "whatsapp":
 		err = sendWhatsApp(ctx, client, ch, message)
+	case "discord":
+		err = sendDiscord(ctx, client, ch, message)
 	default:
 		err = fmt.Errorf("unsupported channel type %q", ch.ChannelType)
 	}
@@ -215,6 +217,28 @@ func sendWhatsApp(ctx context.Context, client *http.Client, ch PersistedChannel,
 		return fmt.Errorf("twilio returned %s", resp.Status)
 	}
 	return nil
+}
+
+// sendDiscord posts to a Discord incoming webhook, ported from Uptime
+// Kuma's Discord notification provider (one of its most-used ones). Config:
+// webhook_url (Discord's "Integrations -> Webhooks -> Copy Webhook URL").
+// Branded as "RoutingNMS" via the webhook's username field, matching the
+// same convention already used for Slack (see sendWebhook above).
+func sendDiscord(ctx context.Context, client *http.Client, ch PersistedChannel, message string) error {
+	webhookURL := cfgString(ch.Config, "webhook_url", "url")
+	if webhookURL == "" {
+		return fmt.Errorf("webhook_url is required")
+	}
+	// Discord caps message content at 2000 characters.
+	if len(message) > 2000 {
+		message = message[:1997] + "..."
+	}
+	payload := map[string]any{"content": message, "username": "RoutingNMS"}
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return postJSON(ctx, client, webhookURL, bodyBytes, nil)
 }
 
 func postJSON(ctx context.Context, client *http.Client, targetURL string, body []byte, headers map[string]string) error {

@@ -222,6 +222,7 @@ const CHANNEL_FIELDS: Record<string, [string, string][]> = {
     ["from", "From (e.g. whatsapp:+14155238886)"],
     ["to", "To (e.g. whatsapp:+15551234567)"],
   ],
+  discord: [["webhook_url", "Discord webhook URL (Server Settings → Integrations → Webhooks)"]],
 };
 
 function ChannelForm({ onSaved }: { onSaved: () => void }) {
@@ -249,7 +250,7 @@ function ChannelForm({ onSaved }: { onSaved: () => void }) {
       <div className="flex flex-wrap gap-3">
         <input className="input" placeholder="Channel name" value={name} onChange={e => setName(e.target.value)} />
         <select className="input" value={type} onChange={e => changeType(e.target.value)}>
-          {["webhook", "slack", "email", "pagerduty", "telegram", "whatsapp"].map(t => <option key={t} value={t}>{t}</option>)}
+          {["webhook", "slack", "email", "pagerduty", "telegram", "whatsapp", "discord"].map(t => <option key={t} value={t}>{t}</option>)}
         </select>
         {required.map(([key, placeholder]) => (
           <input
