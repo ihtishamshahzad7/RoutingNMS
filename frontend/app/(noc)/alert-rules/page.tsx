@@ -197,28 +197,73 @@ function RuleForm({ channels, onSaved }: { channels: Channel[]; onSaved: () => v
   );
 }
 
+// Per-channel-type config fields -- each entry is [fieldKey, placeholder].
+// Matches exactly what backend/internal/alerts/notify.go reads out of
+// `config` for that channel type.
+const CHANNEL_FIELDS: Record<string, [string, string][]> = {
+  webhook: [["url", "Webhook URL"]],
+  slack: [["webhook_url", "Slack incoming webhook URL"]],
+  email: [
+    ["smtp_host", "SMTP host (e.g. smtp.gmail.com)"],
+    ["smtp_port", "SMTP port (default 587)"],
+    ["smtp_username", "SMTP username (optional)"],
+    ["smtp_password", "SMTP password (optional)"],
+    ["from", "From address"],
+    ["to", "To address(es), comma-separated"],
+  ],
+  telegram: [
+    ["bot_token", "Bot token (from @BotFather)"],
+    ["chat_id", "Chat ID"],
+  ],
+  pagerduty: [["routing_key", "Events API v2 routing (integration) key"]],
+  whatsapp: [
+    ["account_sid", "Twilio Account SID"],
+    ["auth_token", "Twilio Auth Token"],
+    ["from", "From (e.g. whatsapp:+14155238886)"],
+    ["to", "To (e.g. whatsapp:+15551234567)"],
+  ],
+};
+
 function ChannelForm({ onSaved }: { onSaved: () => void }) {
   const [name, setName] = useState("");
   const [type, setType] = useState("webhook");
-  const [url, setUrl] = useState("");
+  const [fields, setFields] = useState<Record<string, string>>({});
+  const [msg, setMsg] = useState("");
+  const changeType = (t: string) => { setType(t); setFields({}); };
   const submit = async () => {
-    await apiFetch("/alerts/channels", {
-      method: "POST",
-      body: JSON.stringify({ name, channelType: type, enabled: true, config: { url } }),
-    });
-    setName(""); setUrl(""); onSaved();
+    setMsg("");
+    try {
+      await apiFetch("/alerts/channels", {
+        method: "POST",
+        body: JSON.stringify({ name, channelType: type, enabled: true, config: fields }),
+      });
+      setName(""); setFields({}); onSaved();
+    } catch {
+      setMsg("Failed to save channel.");
+    }
   };
+  const required = CHANNEL_FIELDS[type] ?? [];
   return (
     <div className="border-t border-[#21262D] p-5">
       <div className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-[#8B949E]">Add channel</div>
       <div className="flex flex-wrap gap-3">
         <input className="input" placeholder="Channel name" value={name} onChange={e => setName(e.target.value)} />
-        <select className="input" value={type} onChange={e => setType(e.target.value)}>
+        <select className="input" value={type} onChange={e => changeType(e.target.value)}>
           {["webhook", "slack", "email", "pagerduty", "telegram", "whatsapp"].map(t => <option key={t} value={t}>{t}</option>)}
         </select>
-        <input className="input min-w-[240px] flex-1 font-mono" placeholder="webhook/slack URL" value={url} onChange={e => setUrl(e.target.value)} />
+        {required.map(([key, placeholder]) => (
+          <input
+            key={key}
+            type={key.toLowerCase().includes("password") || key.toLowerCase().includes("token") ? "password" : "text"}
+            className="input min-w-[220px] flex-1 font-mono"
+            placeholder={placeholder}
+            value={fields[key] ?? ""}
+            onChange={e => setFields(f => ({ ...f, [key]: e.target.value }))}
+          />
+        ))}
         <Button variant="primary" disabled={!name} onClick={submit}>Add channel</Button>
       </div>
+      {msg && <div className="mt-2 text-[10px] text-[#F78166]">{msg}</div>}
     </div>
   );
 }
