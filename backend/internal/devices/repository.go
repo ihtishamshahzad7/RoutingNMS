@@ -27,6 +27,22 @@ type Record struct {
 	SNMPConfigured            bool   `json:"snmpConfigured"`
 	ProvisioningTemplateID    *int64 `json:"provisioningTemplateId,omitempty"`
 	LastProvisionedAt         *time.Time `json:"lastProvisionedAt,omitempty"`
+	HTTPCheckEnabled          bool   `json:"httpCheckEnabled"`
+	HTTPURL                   string `json:"httpUrl,omitempty"`
+	HTTPExpectedStatus        int    `json:"httpExpectedStatus"`
+	HTTPKeyword               string `json:"httpKeyword,omitempty"`
+	HTTPTimeoutMS             int    `json:"httpTimeoutMs"`
+}
+
+// HTTPCheckRequest configures the optional HTTP(S)+keyword monitor on a
+// device -- ported from Uptime Kuma's "http"/"keyword" monitor types. A
+// device can have this enabled alongside SNMP/ICMP monitoring.
+type HTTPCheckRequest struct {
+	Enabled        bool   `json:"enabled"`
+	URL            string `json:"url"`
+	ExpectedStatus int    `json:"expectedStatus"`
+	Keyword        string `json:"keyword"`
+	TimeoutMS      int    `json:"timeoutMs"`
 }
 
 func (r Repository) Create(ctx context.Context, in DeviceInput) (Record, error) {
@@ -49,7 +65,7 @@ func (r Repository) List(ctx context.Context, organizationID string) ([]Record, 
 	if r.DB == nil {
 		return nil, fmt.Errorf("device repository is not initialized")
 	}
-	rows, err := r.DB.Query(ctx, `SELECT id,organization_id,name,address,device_type,vendor,model,serial_number,enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port FROM devices WHERE organization_id=$1 ORDER BY name`, organizationID)
+	rows, err := r.DB.Query(ctx, `SELECT id,organization_id,name,address,device_type,vendor,model,serial_number,enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port,http_check_enabled,http_url,http_expected_status,http_keyword,http_timeout_ms FROM devices WHERE organization_id=$1 ORDER BY name`, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +73,7 @@ func (r Repository) List(ctx context.Context, organizationID string) ([]Record, 
 	items := []Record{}
 	for rows.Next() {
 		var d Record
-		if err := rows.Scan(&d.ID, &d.OrganizationID, &d.Name, &d.Address, &d.DeviceType, &d.Vendor, &d.Model, &d.SerialNumber, &d.Enabled, &d.MonitoringIntervalSeconds, &d.SNMPEnabled, &d.SNMPVersion, &d.SNMPPort); err != nil {
+		if err := rows.Scan(&d.ID, &d.OrganizationID, &d.Name, &d.Address, &d.DeviceType, &d.Vendor, &d.Model, &d.SerialNumber, &d.Enabled, &d.MonitoringIntervalSeconds, &d.SNMPEnabled, &d.SNMPVersion, &d.SNMPPort, &d.HTTPCheckEnabled, &d.HTTPURL, &d.HTTPExpectedStatus, &d.HTTPKeyword, &d.HTTPTimeoutMS); err != nil {
 			return nil, err
 		}
 		d.SNMPConfigured = d.SNMPEnabled
@@ -73,7 +89,7 @@ func (r Repository) ListAllEnabled(ctx context.Context) ([]Record, error) {
 	if r.DB == nil {
 		return nil, fmt.Errorf("device repository is not initialized")
 	}
-	rows, err := r.DB.Query(ctx, `SELECT id,organization_id,name,address,device_type,vendor,model,serial_number,enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port FROM devices WHERE enabled=true ORDER BY name`)
+	rows, err := r.DB.Query(ctx, `SELECT id,organization_id,name,address,device_type,vendor,model,serial_number,enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port,http_check_enabled,http_url,http_expected_status,http_keyword,http_timeout_ms FROM devices WHERE enabled=true ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -81,13 +97,30 @@ func (r Repository) ListAllEnabled(ctx context.Context) ([]Record, error) {
 	items := []Record{}
 	for rows.Next() {
 		var d Record
-		if err := rows.Scan(&d.ID, &d.OrganizationID, &d.Name, &d.Address, &d.DeviceType, &d.Vendor, &d.Model, &d.SerialNumber, &d.Enabled, &d.MonitoringIntervalSeconds, &d.SNMPEnabled, &d.SNMPVersion, &d.SNMPPort); err != nil {
+		if err := rows.Scan(&d.ID, &d.OrganizationID, &d.Name, &d.Address, &d.DeviceType, &d.Vendor, &d.Model, &d.SerialNumber, &d.Enabled, &d.MonitoringIntervalSeconds, &d.SNMPEnabled, &d.SNMPVersion, &d.SNMPPort, &d.HTTPCheckEnabled, &d.HTTPURL, &d.HTTPExpectedStatus, &d.HTTPKeyword, &d.HTTPTimeoutMS); err != nil {
 			return nil, err
 		}
 		d.SNMPConfigured = d.SNMPEnabled
 		items = append(items, d)
 	}
 	return items, rows.Err()
+}
+
+// UpdateHTTPCheck configures (or disables) the optional HTTP(S)+keyword
+// monitor on a device.
+func (r Repository) UpdateHTTPCheck(ctx context.Context, id string, req HTTPCheckRequest) error {
+	if r.DB == nil {
+		return fmt.Errorf("device repository is not initialized")
+	}
+	if req.ExpectedStatus == 0 {
+		req.ExpectedStatus = 200
+	}
+	if req.TimeoutMS <= 0 {
+		req.TimeoutMS = 5000
+	}
+	_, err := r.DB.Exec(ctx, `UPDATE devices SET http_check_enabled=$2,http_url=$3,http_expected_status=$4,http_keyword=$5,http_timeout_ms=$6,updated_at=NOW() WHERE id=$1`,
+		id, req.Enabled, req.URL, req.ExpectedStatus, req.Keyword, req.TimeoutMS)
+	return err
 }
 
 func (r Repository) UpdateSNMP(ctx context.Context, id string, req SNMPConfigRequest) error {
@@ -119,8 +152,8 @@ func (r Repository) GetByID(ctx context.Context, id string) (Record, error) {
 		return Record{}, fmt.Errorf("device repository is not initialized")
 	}
 	var d Record
-	err := r.DB.QueryRow(ctx, `SELECT id,organization_id,name,address,device_type,COALESCE(vendor,''),COALESCE(model,''),COALESCE(serial_number,''),enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port,provisioning_template_id,last_provisioned_at FROM devices WHERE id=$1`, id).
-		Scan(&d.ID, &d.OrganizationID, &d.Name, &d.Address, &d.DeviceType, &d.Vendor, &d.Model, &d.SerialNumber, &d.Enabled, &d.MonitoringIntervalSeconds, &d.SNMPEnabled, &d.SNMPVersion, &d.SNMPPort, &d.ProvisioningTemplateID, &d.LastProvisionedAt)
+	err := r.DB.QueryRow(ctx, `SELECT id,organization_id,name,address,device_type,COALESCE(vendor,''),COALESCE(model,''),COALESCE(serial_number,''),enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port,provisioning_template_id,last_provisioned_at,http_check_enabled,http_url,http_expected_status,http_keyword,http_timeout_ms FROM devices WHERE id=$1`, id).
+		Scan(&d.ID, &d.OrganizationID, &d.Name, &d.Address, &d.DeviceType, &d.Vendor, &d.Model, &d.SerialNumber, &d.Enabled, &d.MonitoringIntervalSeconds, &d.SNMPEnabled, &d.SNMPVersion, &d.SNMPPort, &d.ProvisioningTemplateID, &d.LastProvisionedAt, &d.HTTPCheckEnabled, &d.HTTPURL, &d.HTTPExpectedStatus, &d.HTTPKeyword, &d.HTTPTimeoutMS)
 	d.SNMPConfigured = d.SNMPEnabled
 	return d, err
 }

@@ -8,6 +8,7 @@ package alertsfeed
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -22,6 +23,7 @@ const (
 	SourceOLT    Source = "olt"    // an open optical/hardware alert on an OLT/PON/ONU
 	SourceDevice Source = "device" // a monitored device whose latest health probe is unreachable
 	SourceTrap   Source = "trap"   // a recent SNMP trap matched to warning/critical by a trap rule
+	SourceHTTP   Source = "http"   // a device's optional HTTP(S)+keyword monitor (ported from Uptime Kuma)
 )
 
 // Active is one currently-active thing worth alerting an operator about.
@@ -91,6 +93,24 @@ func (r Repository) List(ctx context.Context) ([]Active, error) {
 		return nil, err
 	}
 	out = append(out, trapAlerts...)
+
+	httpAlerts, err := r.downHTTP(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, httpAlerts...)
+
+	httpRecovered, err := r.recoveredHTTP(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, httpRecovered...)
+
+	certExpiring, err := r.certExpiringSoon(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, certExpiring...)
 
 	return out, nil
 }
@@ -231,6 +251,143 @@ func (r Repository) recoveredDevices(ctx context.Context) ([]Active, error) {
 			Message:  "device back online (" + address + ")",
 			Since:    since,
 			Kind:     "up",
+		})
+	}
+	return out, rows.Err()
+}
+
+// downHTTP finds devices whose latest "http_up" metric sample (recorded by
+// devices.SamplePeriodically's optional HTTP(S)+keyword check) reported
+// down -- independent of the device's SNMP/ICMP "up" metric, since a device
+// can be pingable but serving a broken/wrong-status web UI.
+func (r Repository) downHTTP(ctx context.Context) ([]Active, error) {
+	rows, err := r.DB.Query(ctx, `
+		WITH latest AS (
+			SELECT DISTINCT ON (subject_id) subject_id, value, recorded_at
+			FROM metric_samples
+			WHERE subject_type = 'device' AND metric_name = 'http_up'
+			ORDER BY subject_id, recorded_at DESC
+		)
+		SELECT d.id, d.name, d.http_url, l.recorded_at
+		FROM latest l
+		JOIN devices d ON d.id::text = l.subject_id
+		WHERE l.value = 0 AND d.enabled = true AND d.http_check_enabled = true
+		ORDER BY l.recorded_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Active{}
+	for rows.Next() {
+		var id, name, httpURL string
+		var since time.Time
+		if err := rows.Scan(&id, &name, &httpURL, &since); err != nil {
+			return nil, err
+		}
+		out = append(out, Active{
+			ID:       "http-" + id,
+			Source:   SourceHTTP,
+			Severity: "warning",
+			Hostname: name,
+			Message:  "HTTP check failing (" + httpURL + ")",
+			Since:    since,
+			Kind:     "down",
+		})
+	}
+	return out, rows.Err()
+}
+
+// recoveredHTTP is downHTTP's recovery counterpart, mirroring
+// recoveredDevices for the http_up metric.
+func (r Repository) recoveredHTTP(ctx context.Context) ([]Active, error) {
+	rows, err := r.DB.Query(ctx, `
+		WITH ranked AS (
+			SELECT subject_id, value, recorded_at,
+				LAG(value) OVER (PARTITION BY subject_id ORDER BY recorded_at) AS prev_value
+			FROM metric_samples
+			WHERE subject_type = 'device' AND metric_name = 'http_up'
+		),
+		latest AS (
+			SELECT DISTINCT ON (subject_id) subject_id, value, prev_value, recorded_at
+			FROM ranked
+			ORDER BY subject_id, recorded_at DESC
+		)
+		SELECT d.id, d.name, d.http_url, l.recorded_at
+		FROM latest l
+		JOIN devices d ON d.id::text = l.subject_id
+		WHERE l.value = 1 AND l.prev_value = 0 AND l.recorded_at >= $1 AND d.enabled = true AND d.http_check_enabled = true
+		ORDER BY l.recorded_at DESC`, time.Now().Add(-RecoveryLookback))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Active{}
+	for rows.Next() {
+		var id, name, httpURL string
+		var since time.Time
+		if err := rows.Scan(&id, &name, &httpURL, &since); err != nil {
+			return nil, err
+		}
+		out = append(out, Active{
+			ID:       "http-recovered-" + id,
+			Source:   SourceHTTP,
+			Severity: "info",
+			Hostname: name,
+			Message:  "HTTP check recovered (" + httpURL + ")",
+			Since:    since,
+			Kind:     "up",
+		})
+	}
+	return out, rows.Err()
+}
+
+// CertExpiryWarningDays is the threshold (ported from Uptime Kuma's default
+// certificate-expiry notification) below which a TLS cert still counts as
+// "expiring soon".
+const CertExpiryWarningDays = 14
+
+// certExpiringSoon finds HTTPS-monitored devices whose latest observed
+// certificate expiry is within CertExpiryWarningDays. Unlike the down/up
+// pairs above this has no natural "since" transition -- it's reported for
+// as long as the cert stays within the window, at reduced severity based on
+// how close expiry actually is.
+func (r Repository) certExpiringSoon(ctx context.Context) ([]Active, error) {
+	rows, err := r.DB.Query(ctx, `
+		WITH latest AS (
+			SELECT DISTINCT ON (subject_id) subject_id, value, recorded_at
+			FROM metric_samples
+			WHERE subject_type = 'device' AND metric_name = 'http_cert_expiry_days'
+			ORDER BY subject_id, recorded_at DESC
+		)
+		SELECT d.id, d.name, d.http_url, l.value, l.recorded_at
+		FROM latest l
+		JOIN devices d ON d.id::text = l.subject_id
+		WHERE l.value <= $1 AND d.enabled = true AND d.http_check_enabled = true
+		ORDER BY l.value ASC`, float64(CertExpiryWarningDays))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Active{}
+	for rows.Next() {
+		var id, name, httpURL string
+		var daysLeft float64
+		var since time.Time
+		if err := rows.Scan(&id, &name, &httpURL, &daysLeft, &since); err != nil {
+			return nil, err
+		}
+		severity := "warning"
+		if daysLeft <= 3 {
+			severity = "critical"
+		}
+		out = append(out, Active{
+			ID:       "cert-expiry-" + id,
+			Source:   SourceHTTP,
+			Severity: severity,
+			Hostname: name,
+			Message:  fmt.Sprintf("TLS certificate for %s expires in %.0f day(s)", httpURL, daysLeft),
+			Since:    since,
+			Kind:     "down",
 		})
 	}
 	return out, rows.Err()

@@ -5,6 +5,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/httpcheck"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/metricsdb"
 )
 
@@ -52,6 +53,26 @@ func sampleOnce(ctx context.Context, repo Repository, metrics metricsdb.Reposito
 			metricsdb.Sample{SubjectType: "device", SubjectID: d.ID, MetricName: "up", Value: up, RecordedAt: now},
 			metricsdb.Sample{SubjectType: "device", SubjectID: d.ID, MetricName: "latency_ms", Value: health.LatencyMS, RecordedAt: now},
 		)
+
+		// Optional HTTP(S)+keyword monitor (ported from Uptime Kuma) --
+		// independent of the SNMP/ICMP check above, so a device can be
+		// "SNMP down" and "HTTP up" (or vice versa) at the same time.
+		if d.HTTPCheckEnabled && d.HTTPURL != "" {
+			httpCtx, httpCancel := context.WithTimeout(ctx, time.Duration(d.HTTPTimeoutMS)*time.Millisecond+time.Second)
+			result := httpcheck.Check(httpCtx, d.HTTPURL, d.HTTPExpectedStatus, d.HTTPKeyword, time.Duration(d.HTTPTimeoutMS)*time.Millisecond)
+			httpCancel()
+			httpUp := 0.0
+			if result.Reachable {
+				httpUp = 1
+			}
+			samples = append(samples,
+				metricsdb.Sample{SubjectType: "device", SubjectID: d.ID, MetricName: "http_up", Value: httpUp, RecordedAt: now},
+				metricsdb.Sample{SubjectType: "device", SubjectID: d.ID, MetricName: "http_latency_ms", Value: result.LatencyMS, RecordedAt: now},
+			)
+			if result.CertExpiryInDays != nil {
+				samples = append(samples, metricsdb.Sample{SubjectType: "device", SubjectID: d.ID, MetricName: "http_cert_expiry_days", Value: float64(*result.CertExpiryInDays), RecordedAt: now})
+			}
+		}
 	}
 	if err := metrics.RecordBatch(ctx, samples); err != nil {
 		log.Printf("device metric sampler: record batch: %v", err)

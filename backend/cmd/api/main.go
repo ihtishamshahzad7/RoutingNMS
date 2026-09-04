@@ -194,6 +194,7 @@ func main() {
 		mux.Handle("GET /api/v1/devices/health", authHandler.Middleware(http.HandlerFunc(healthHandler.ServeHTTP)))
 		mux.Handle("POST /api/v1/devices/test", authHandler.Middleware(http.HandlerFunc(devices.TestHandler{}.ServeHTTP)))
 		mux.Handle("PUT /api/v1/devices/", authHandler.Middleware(http.HandlerFunc(deviceHandler.UpdateSNMP)))
+		mux.Handle("PUT /api/v1/devices/{id}/http-check", authHandler.Middleware(http.HandlerFunc(deviceHandler.UpdateHTTPCheck)))
 		mux.Handle("POST /api/v1/devices/", authHandler.Middleware(http.HandlerFunc(discoveryHandler.Discover)))
 		mux.Handle("GET /api/v1/devices/", authHandler.Middleware(http.HandlerFunc(discoveryHandler.Interfaces)))
 
@@ -410,6 +411,7 @@ func main() {
 		mux.HandleFunc("GET /api/v1/devices/health", unavailable)
 		mux.HandleFunc("POST /api/v1/devices/test", unavailable)
 		mux.HandleFunc("PUT /api/v1/devices/", unavailable)
+		mux.HandleFunc("PUT /api/v1/devices/{id}/http-check", unavailable)
 		mux.HandleFunc("POST /api/v1/devices/", unavailable)
 		mux.HandleFunc("GET /api/v1/devices/", unavailable)
 		mux.HandleFunc("GET /api/v1/olt/runtime", unavailable)
