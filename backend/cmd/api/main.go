@@ -32,6 +32,7 @@ import (
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/snmptrap"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/statuspage"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/syslog"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/tags"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/topology"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -392,6 +393,15 @@ func main() {
 		mux.Handle("DELETE /api/v1/maintenance-windows/{id}", authHandler.Middleware(maintenance.AdminAPI{Repo: maintenanceRepo}))
 		mux.Handle("PUT /api/v1/maintenance-windows/{id}/items", authHandler.Middleware(maintenance.ItemsAPI{Repo: maintenanceRepo}))
 
+		tagsRepo := tags.Repository{DB: db}
+		mux.Handle("GET /api/v1/tags", authHandler.Middleware(tags.AdminAPI{Repo: tagsRepo}))
+		mux.Handle("POST /api/v1/tags", authHandler.Middleware(tags.AdminAPI{Repo: tagsRepo}))
+		mux.Handle("PUT /api/v1/tags/{id}", authHandler.Middleware(tags.AdminAPI{Repo: tagsRepo}))
+		mux.Handle("DELETE /api/v1/tags/{id}", authHandler.Middleware(tags.AdminAPI{Repo: tagsRepo}))
+		mux.Handle("GET /api/v1/tags/assignments", authHandler.Middleware(tags.AssignmentsAPI{Repo: tagsRepo}))
+		mux.Handle("GET /api/v1/tag-assignments/{subjectType}/{subjectId}", authHandler.Middleware(tags.AssignmentsAPI{Repo: tagsRepo}))
+		mux.Handle("PUT /api/v1/tag-assignments/{subjectType}/{subjectId}", authHandler.Middleware(tags.AssignmentsAPI{Repo: tagsRepo}))
+
 		// Sprint 3 — ISP features: physical sites, wireless access points,
 		// and subscriber customer connections (migration 0018). Session-authed
 		// CRUD following the provisioning/templates idiom ({id} path vars).
@@ -486,6 +496,13 @@ func main() {
 		mux.HandleFunc("PUT /api/v1/maintenance-windows/{id}", unavailable)
 		mux.HandleFunc("DELETE /api/v1/maintenance-windows/{id}", unavailable)
 		mux.HandleFunc("PUT /api/v1/maintenance-windows/{id}/items", unavailable)
+		mux.HandleFunc("GET /api/v1/tags", unavailable)
+		mux.HandleFunc("POST /api/v1/tags", unavailable)
+		mux.HandleFunc("PUT /api/v1/tags/{id}", unavailable)
+		mux.HandleFunc("DELETE /api/v1/tags/{id}", unavailable)
+		mux.HandleFunc("GET /api/v1/tags/assignments", unavailable)
+		mux.HandleFunc("GET /api/v1/tag-assignments/{subjectType}/{subjectId}", unavailable)
+		mux.HandleFunc("PUT /api/v1/tag-assignments/{subjectType}/{subjectId}", unavailable)
 		mux.HandleFunc("POST /api/v1/ai/assistant", unavailable)
 	}
 
