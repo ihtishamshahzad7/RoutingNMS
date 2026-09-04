@@ -34,6 +34,7 @@ import (
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/syslog"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/tags"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/topology"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/traceroute"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -333,6 +334,11 @@ func main() {
 			http.NotFound(w, r)
 		})))
 
+		// On-demand traceroute -- an "advanced" pinging capability Kuma's
+		// ping monitor never had: hop-by-hop path trace to a device, for
+		// diagnosing where a path breaks rather than just that it did.
+		mux.Handle("POST /api/v1/devices/{id}/traceroute", authHandler.Middleware(traceroute.API{Devices: devicesRepo}))
+
 		// Subnet auto-discovery: scan a CIDR over SNMP, classify what
 		// responds, and one-click import selected hosts as devices, as
 		// called by frontend/app/devices/page.tsx's "Discover subnet" flow.
@@ -482,6 +488,7 @@ func main() {
 		mux.HandleFunc("DELETE /api/v1/provisioning/templates/{id}", unavailable)
 		mux.HandleFunc("PUT /api/v1/devices/{id}/provisioning", unavailable)
 		mux.HandleFunc("GET /api/v1/devices/{id}/provisioning/preview", unavailable)
+		mux.HandleFunc("POST /api/v1/devices/{id}/traceroute", unavailable)
 		mux.HandleFunc("GET /api/v1/provision/routeros/{serial}", unavailable)
 		mux.HandleFunc("GET /api/v1/status-pages", unavailable)
 		mux.HandleFunc("POST /api/v1/status-pages", unavailable)

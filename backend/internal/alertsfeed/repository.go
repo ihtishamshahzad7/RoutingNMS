@@ -24,6 +24,7 @@ const (
 	SourceDevice Source = "device" // a monitored device whose latest health probe is unreachable
 	SourceTrap   Source = "trap"   // a recent SNMP trap matched to warning/critical by a trap rule
 	SourceHTTP   Source = "http"   // a device's optional HTTP(S)+keyword monitor (ported from Uptime Kuma)
+	SourceICMP   Source = "icmp"   // a device's dedicated ICMP ping poller (internal/ping), independent of the TCP/SNMP "up" check
 )
 
 // Active is one currently-active thing worth alerting an operator about.
@@ -128,6 +129,18 @@ func (r Repository) List(ctx context.Context) ([]Active, error) {
 		return nil, err
 	}
 	out = append(out, certExpiring...)
+
+	icmpAlerts, err := r.downICMP(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, icmpAlerts...)
+
+	icmpRecovered, err := r.recoveredICMP(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, icmpRecovered...)
 
 	return r.suppressMaintenance(ctx, out)
 }
@@ -439,6 +452,96 @@ func (r Repository) certExpiringSoon(ctx context.Context) ([]Active, error) {
 			Message:     fmt.Sprintf("TLS certificate for %s expires in %.0f day(s)", httpURL, daysLeft),
 			Since:       since,
 			Kind:        "down",
+			subjectType: "device",
+			subjectID:   id,
+		})
+	}
+	return out, rows.Err()
+}
+
+// downICMP finds devices whose latest "icmp_reachable" metric sample
+// (recorded by the dedicated ICMP poller in internal/ping, distinct from the
+// TCP/SNMP-based "up" check) reported unreachable -- a device can answer TCP
+// or SNMP but stop responding to ICMP (a firewall change, an overloaded CPU
+// deprioritizing ping), so this is tracked as its own alert source.
+func (r Repository) downICMP(ctx context.Context) ([]Active, error) {
+	rows, err := r.DB.Query(ctx, `
+		WITH latest AS (
+			SELECT DISTINCT ON (subject_id) subject_id, value, recorded_at
+			FROM metric_samples
+			WHERE subject_type = 'device' AND metric_name = 'icmp_reachable'
+			ORDER BY subject_id, recorded_at DESC
+		)
+		SELECT d.id, d.name, d.address, l.recorded_at
+		FROM latest l
+		JOIN devices d ON d.id::text = l.subject_id
+		WHERE l.value = 0 AND d.enabled = true AND d.icmp_enabled = true
+		ORDER BY l.recorded_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Active{}
+	for rows.Next() {
+		var id, name, address string
+		var since time.Time
+		if err := rows.Scan(&id, &name, &address, &since); err != nil {
+			return nil, err
+		}
+		out = append(out, Active{
+			ID:          "icmp-" + id,
+			Source:      SourceICMP,
+			Severity:    "warning",
+			Hostname:    name,
+			Message:     "ICMP ping failing (" + address + ")",
+			Since:       since,
+			Kind:        "down",
+			subjectType: "device",
+			subjectID:   id,
+		})
+	}
+	return out, rows.Err()
+}
+
+// recoveredICMP is downICMP's recovery counterpart, mirroring
+// recoveredDevices/recoveredHTTP for the icmp_reachable metric.
+func (r Repository) recoveredICMP(ctx context.Context) ([]Active, error) {
+	rows, err := r.DB.Query(ctx, `
+		WITH ranked AS (
+			SELECT subject_id, value, recorded_at,
+				LAG(value) OVER (PARTITION BY subject_id ORDER BY recorded_at) AS prev_value
+			FROM metric_samples
+			WHERE subject_type = 'device' AND metric_name = 'icmp_reachable'
+		),
+		latest AS (
+			SELECT DISTINCT ON (subject_id) subject_id, value, prev_value, recorded_at
+			FROM ranked
+			ORDER BY subject_id, recorded_at DESC
+		)
+		SELECT d.id, d.name, d.address, l.recorded_at
+		FROM latest l
+		JOIN devices d ON d.id::text = l.subject_id
+		WHERE l.value = 1 AND l.prev_value = 0 AND l.recorded_at >= $1 AND d.enabled = true AND d.icmp_enabled = true
+		ORDER BY l.recorded_at DESC`, time.Now().Add(-RecoveryLookback))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Active{}
+	for rows.Next() {
+		var id, name, address string
+		var since time.Time
+		if err := rows.Scan(&id, &name, &address, &since); err != nil {
+			return nil, err
+		}
+		out = append(out, Active{
+			ID:          "icmp-recovered-" + id,
+			Source:      SourceICMP,
+			Severity:    "info",
+			Hostname:    name,
+			Message:     "ICMP ping recovered (" + address + ")",
+			Since:       since,
+			Kind:        "up",
 			subjectType: "device",
 			subjectID:   id,
 		})

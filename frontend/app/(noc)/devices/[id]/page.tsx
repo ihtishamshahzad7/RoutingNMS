@@ -13,6 +13,8 @@ type Interface={id:number;deviceId:string;ifIndex:number;name:string;description
 type PingResult={id:number;deviceId:string;probedAt:string;rttMs?:number|null;jitterMs?:number|null;lossPct:number;ttl?:number|null;isReachable:boolean};
 type PingLive={live?:{address?:string;reachable:boolean;rttMs?:number;jitterMs?:number;lossPct?:number;ttl?:number;error?:string};history:PingResult[]};
 type Tag={id:number;name:string;color:string};
+type TraceHop={number:number;address?:string;hostname?:string;rttMs?:number|null;timedOut:boolean};
+type TraceResult={address:string;hops:TraceHop[];ranAt:string;error?:string};
 
 const ORG="tenant-1";
 const card="rounded-2xl border border-slate-800 bg-slate-900 p-5";
@@ -34,6 +36,8 @@ export default function DeviceDetailsPage(){
  useEffect(()=>{apiFetch<Tag[]>(`/tags?tenantId=${ORG}`).then(setAllTags).catch(()=>{})},[]);
  useEffect(()=>{apiFetch<Tag[]>(`/tag-assignments/device/${id}`).then(list=>setDeviceTagIds(list.map(t=>t.id))).catch(()=>{})},[id]);
  async function toggleTag(tagId:number){const next=deviceTagIds.includes(tagId)?deviceTagIds.filter(t=>t!==tagId):[...deviceTagIds,tagId];setDeviceTagIds(next);setTagSaving(true);setTagMessage("");try{await apiFetch(`/tag-assignments/device/${id}`,{method:"PUT",body:JSON.stringify({tagIds:next})})}catch(e){setTagMessage(e instanceof ApiError?e.message:"Failed to save tags")}finally{setTagSaving(false)}}
+ const [trace,setTrace]=useState<TraceResult|null>(null),[tracing,setTracing]=useState(false),[traceError,setTraceError]=useState("");
+ async function runTraceroute(){setTracing(true);setTraceError("");setTrace(null);try{setTrace(await apiFetch<TraceResult>(`/devices/${id}/traceroute`,{method:"POST"}))}catch(e){setTraceError(e instanceof ApiError?e.message:"Traceroute failed.")}finally{setTracing(false)}}
  const [httpSaving,setHttpSaving]=useState(false),[httpMessage,setHttpMessage]=useState("");
  async function saveHTTPCheck(e:FormEvent<HTMLFormElement>){e.preventDefault();if(!device)return;setHttpSaving(true);setHttpMessage("");const data=new FormData(e.currentTarget);try{const updated=await apiFetch<Device>(`/devices/${device.id}/http-check`,{method:"PUT",body:JSON.stringify({enabled:data.get("enabled")==="on",url:data.get("url"),expectedStatus:Number(data.get("expectedStatus")||200),keyword:data.get("keyword"),timeoutMs:Number(data.get("timeoutMs")||5000)})});setDevice(updated);setHttpMessage("HTTP check configuration saved.")}catch(e){setHttpMessage(e instanceof ApiError?e.message:"Failed to save HTTP check configuration.")}finally{setHttpSaving(false)}}
  async function discover(){setDiscovering(true);setMessage("");try{const r=await apiFetch<{interfaceCount:number;systemName?:string}>(`/devices/${id}/discover`,{method:"POST"});setMessage(`Discovery completed: ${r.interfaceCount} interfaces saved${r.systemName?` · ${r.systemName}`:""}.`);await load()}catch(e){setMessage(e instanceof ApiError?e.message:e instanceof Error?e.message:"SNMP discovery failed")}finally{setDiscovering(false)}}
@@ -75,6 +79,26 @@ export default function DeviceDetailsPage(){
    </div>}
   {pingState.live&&pingState.live.live?.error&&<div className="mt-3 text-xs text-amber-400">{pingState.live.live.error}</div>}
   <div className="mt-4"><PingSparkline results={pingState.live?.history??[]} /></div>
+ </section>
+ <section className={`mb-6 ${card}`}>
+  <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">Traceroute</h2><p className="mt-1 text-xs text-slate-500">On-demand hop-by-hop path trace to this device — an advanced diagnostic the previous monitoring setup never offered.</p></div><button onClick={runTraceroute} disabled={tracing} className="rounded-lg border border-cyan-700 bg-cyan-950/40 px-3 py-2 text-xs text-cyan-300 hover:bg-cyan-900/40 disabled:opacity-50">{tracing?"Tracing…":"Run traceroute"}</button></div>
+  {traceError&&<div className="mt-3 text-xs text-red-400">{traceError}</div>}
+  {trace&&<div className="mt-4 overflow-x-auto">
+   {trace.error&&<div className="mb-3 text-xs text-amber-400">{trace.error}</div>}
+   <table className="w-full text-left text-sm">
+    <thead><tr className="text-xs uppercase text-slate-500"><th className="pb-2 pr-4">Hop</th><th className="pb-2 pr-4">Address</th><th className="pb-2">RTT</th></tr></thead>
+    <tbody>
+     {trace.hops.map(h=>(
+      <tr key={h.number} className="border-t border-slate-800">
+       <td className="py-1.5 pr-4 text-slate-500">{h.number}</td>
+       <td className="py-1.5 pr-4">{h.timedOut?<span className="text-slate-600">* * *</span>:<span>{h.hostname?`${h.hostname} `:""}<span className="text-slate-500">{h.address}</span></span>}</td>
+       <td className="py-1.5">{h.rttMs!=null?`${h.rttMs.toFixed(2)} ms`:"—"}</td>
+      </tr>
+     ))}
+    </tbody>
+   </table>
+  </div>}
+  {!trace&&!tracing&&<div className="mt-4 text-sm text-slate-500">Run a trace to see the path to this device, hop by hop.</div>}
  </section>
  {device.deviceType==="router"&&<section className={`mb-6 ${card}`}>
   <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">RouterOS auto-provisioning</h2><p className="mt-1 text-xs text-slate-500">Assign a script template; the router pulls its own config via <code>/tool fetch</code> using a serial-derived password.</p></div></div>

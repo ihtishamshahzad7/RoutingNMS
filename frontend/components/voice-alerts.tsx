@@ -25,18 +25,20 @@ type ActiveAlert = {
 };
 
 const POLL_MS = 15000;
-const SOURCE_LABEL: Record<AlertSource, string> = { olt: "OLT alert", device: "Device", trap: "SNMP trap", http: "HTTP check" };
+const SOURCE_LABEL: Record<AlertSource, string> = { olt: "OLT alert", device: "Device", trap: "SNMP trap", http: "HTTP check", icmp: "ICMP ping" };
 
 function speechText(a: ActiveAlert): string {
   if (a.kind === "up") {
     if (a.source === "device") return `${a.hostname} is back up.`;
     if (a.source === "olt") return `Alert cleared on ${a.hostname}. ${a.message}.`;
     if (a.source === "http") return `HTTP check on ${a.hostname} recovered.`;
+    if (a.source === "icmp") return `ICMP ping to ${a.hostname} recovered.`;
     return `Recovered: ${a.hostname}. ${a.message}.`;
   }
   if (a.source === "device") return `${a.severity}. ${a.hostname} is down.`;
   if (a.source === "olt") return `${a.severity} alert on ${a.hostname}. ${a.message}.`;
   if (a.source === "http") return `${a.severity}. ${a.hostname}. ${a.message}.`;
+  if (a.source === "icmp") return `${a.severity}. ICMP ping failing on ${a.hostname}.`;
   return `${a.severity} SNMP trap from ${a.hostname}. ${a.message}.`;
 }
 
