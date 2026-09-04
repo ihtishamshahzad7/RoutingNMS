@@ -20,6 +20,7 @@ const NAV = [
   { name: "Access Points", href: "/access-points", icon: "◬" },
   { name: "Customers", href: "/customers", icon: "◉" },
   { name: "Provisioning", href: "/provisioning", icon: "⚙" },
+  { name: "Status Pages", href: "/status-pages", icon: "◔" },
 ];
 
 /**

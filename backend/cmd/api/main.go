@@ -27,6 +27,7 @@ import (
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/ping"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/provisioning"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/sites"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/statuspage"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/snmp"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/snmptrap"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/syslog"
@@ -368,6 +369,20 @@ func main() {
 		mux.Handle("GET /api/v1/devices/{id}/provisioning/preview", authHandler.Middleware(provisioning.PreviewAPI{Templates: provisioningRepo, Devices: devicesRepo, Salt: provisionSalt, BaseURL: provisionBaseURL, Token: provisionToken}))
 		mux.Handle("GET /api/v1/provision/routeros/{serial}", provisioning.FetchAPI{Templates: provisioningRepo, Devices: devicesRepo, Salt: provisionSalt, Token: provisionToken})
 
+		// Public status pages, ported from Uptime Kuma: a branded,
+		// unauthenticated page listing chosen devices/OLTs and their
+		// current status. Admin CRUD is session-authed; the public view
+		// (GET /api/v1/public/status/{slug}) is registered separately,
+		// outside the auth-required block below.
+		statusPageRepo := statuspage.Repository{DB: db}
+		mux.Handle("GET /api/v1/status-pages", authHandler.Middleware(statuspage.AdminAPI{Repo: statusPageRepo}))
+		mux.Handle("POST /api/v1/status-pages", authHandler.Middleware(statuspage.AdminAPI{Repo: statusPageRepo}))
+		mux.Handle("GET /api/v1/status-pages/{id}", authHandler.Middleware(statuspage.AdminAPI{Repo: statusPageRepo}))
+		mux.Handle("PUT /api/v1/status-pages/{id}", authHandler.Middleware(statuspage.AdminAPI{Repo: statusPageRepo}))
+		mux.Handle("DELETE /api/v1/status-pages/{id}", authHandler.Middleware(statuspage.AdminAPI{Repo: statusPageRepo}))
+		mux.Handle("PUT /api/v1/status-pages/{id}/items", authHandler.Middleware(statuspage.ItemsAPI{Repo: statusPageRepo}))
+		mux.Handle("GET /api/v1/public/status/{slug}", statuspage.PublicAPI{Repo: statusPageRepo, Resolver: statuspage.StatusResolver{DB: db}})
+
 		// Sprint 3 — ISP features: physical sites, wireless access points,
 		// and subscriber customer connections (migration 0018). Session-authed
 		// CRUD following the provisioning/templates idiom ({id} path vars).
@@ -449,6 +464,13 @@ func main() {
 		mux.HandleFunc("PUT /api/v1/devices/{id}/provisioning", unavailable)
 		mux.HandleFunc("GET /api/v1/devices/{id}/provisioning/preview", unavailable)
 		mux.HandleFunc("GET /api/v1/provision/routeros/{serial}", unavailable)
+		mux.HandleFunc("GET /api/v1/status-pages", unavailable)
+		mux.HandleFunc("POST /api/v1/status-pages", unavailable)
+		mux.HandleFunc("GET /api/v1/status-pages/{id}", unavailable)
+		mux.HandleFunc("PUT /api/v1/status-pages/{id}", unavailable)
+		mux.HandleFunc("DELETE /api/v1/status-pages/{id}", unavailable)
+		mux.HandleFunc("PUT /api/v1/status-pages/{id}/items", unavailable)
+		mux.HandleFunc("GET /api/v1/public/status/{slug}", unavailable)
 		mux.HandleFunc("POST /api/v1/ai/assistant", unavailable)
 	}
 
