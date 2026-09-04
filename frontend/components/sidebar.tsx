@@ -21,6 +21,7 @@ const NAV = [
   { name: "Customers", href: "/customers", icon: "◉" },
   { name: "Provisioning", href: "/provisioning", icon: "⚙" },
   { name: "Status Pages", href: "/status-pages", icon: "◔" },
+  { name: "Maintenance", href: "/maintenance", icon: "⛭" },
 ];
 
 /**

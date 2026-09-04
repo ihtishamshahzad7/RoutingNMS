@@ -40,9 +40,26 @@ type Active struct {
 	// device whose latest health sample flipped back to reachable, within
 	// RecoveryLookback. The voice-alert feature announces both.
 	Kind string `json:"kind,omitempty"`
+	// subjectType/subjectID identify the underlying device/OLT for
+	// maintenance-window suppression -- not serialized, since existing
+	// clients key off ID/Source/Hostname already.
+	subjectType string
+	subjectID   string
 }
 
-type Repository struct{ DB *pgxpool.Pool }
+// MaintenanceChecker answers "which devices/OLTs are currently under an
+// active maintenance window" -- satisfied by maintenance.Checker. Declared
+// as an interface here (rather than importing internal/maintenance
+// directly) to keep this package's dependency graph shallow; main.go wires
+// the concrete implementation in.
+type MaintenanceChecker interface {
+	ActiveSubjects(ctx context.Context) (map[string]bool, error)
+}
+
+type Repository struct {
+	DB          *pgxpool.Pool
+	Maintenance MaintenanceChecker // optional; nil means no suppression
+}
 
 // TrapLookback bounds how far back a trap still counts as "active" --
 // unlike OLT alerts (which have an explicit open/cleared lifecycle) and
@@ -112,6 +129,30 @@ func (r Repository) List(ctx context.Context) ([]Active, error) {
 	}
 	out = append(out, certExpiring...)
 
+	return r.suppressMaintenance(ctx, out)
+}
+
+// suppressMaintenance drops "down" alerts (device/HTTP/cert/OLT) for any
+// subject currently covered by an active maintenance window -- ported from
+// Uptime Kuma's maintenance-window feature, whose whole point is that a
+// planned truck roll or firmware upgrade doesn't page anyone. Recovery
+// ("up") events and traps (which carry no subject) are never suppressed, so
+// an operator still hears "it's back" even if the window is still open.
+func (r Repository) suppressMaintenance(ctx context.Context, in []Active) ([]Active, error) {
+	if r.Maintenance == nil {
+		return in, nil
+	}
+	active, err := r.Maintenance.ActiveSubjects(ctx)
+	if err != nil || len(active) == 0 {
+		return in, err
+	}
+	out := make([]Active, 0, len(in))
+	for _, a := range in {
+		if a.Kind != "up" && a.subjectType != "" && active[a.subjectType+":"+a.subjectID] {
+			continue
+		}
+		out = append(out, a)
+	}
 	return out, nil
 }
 
@@ -136,6 +177,7 @@ func (r Repository) oltAlerts(ctx context.Context) ([]Active, error) {
 		a.ID = "olt-" + strconv.FormatInt(id, 10)
 		a.Source = SourceOLT
 		a.Kind = "down"
+		a.subjectType, a.subjectID = "olt", strconv.FormatInt(id, 10)
 		out = append(out, a)
 	}
 	return out, rows.Err()
@@ -165,6 +207,7 @@ func (r Repository) oltRecovered(ctx context.Context) ([]Active, error) {
 		a.ID = "olt-recovered-" + strconv.FormatInt(id, 10)
 		a.Source = SourceOLT
 		a.Kind = "up"
+		a.subjectType, a.subjectID = "olt", strconv.FormatInt(id, 10)
 		out = append(out, a)
 	}
 	return out, rows.Err()
@@ -198,13 +241,15 @@ func (r Repository) downDevices(ctx context.Context) ([]Active, error) {
 			return nil, err
 		}
 		out = append(out, Active{
-			ID:       "device-" + id,
-			Source:   SourceDevice,
-			Severity: "critical",
-			Hostname: name,
-			Message:  "device unreachable (" + address + ")",
-			Since:    since,
-			Kind:     "down",
+			ID:          "device-" + id,
+			Source:      SourceDevice,
+			Severity:    "critical",
+			Hostname:    name,
+			Message:     "device unreachable (" + address + ")",
+			Since:       since,
+			Kind:        "down",
+			subjectType: "device",
+			subjectID:   id,
 		})
 	}
 	return out, rows.Err()
@@ -244,13 +289,15 @@ func (r Repository) recoveredDevices(ctx context.Context) ([]Active, error) {
 			return nil, err
 		}
 		out = append(out, Active{
-			ID:       "device-recovered-" + id,
-			Source:   SourceDevice,
-			Severity: "info",
-			Hostname: name,
-			Message:  "device back online (" + address + ")",
-			Since:    since,
-			Kind:     "up",
+			ID:          "device-recovered-" + id,
+			Source:      SourceDevice,
+			Severity:    "info",
+			Hostname:    name,
+			Message:     "device back online (" + address + ")",
+			Since:       since,
+			Kind:        "up",
+			subjectType: "device",
+			subjectID:   id,
 		})
 	}
 	return out, rows.Err()
@@ -285,13 +332,15 @@ func (r Repository) downHTTP(ctx context.Context) ([]Active, error) {
 			return nil, err
 		}
 		out = append(out, Active{
-			ID:       "http-" + id,
-			Source:   SourceHTTP,
-			Severity: "warning",
-			Hostname: name,
-			Message:  "HTTP check failing (" + httpURL + ")",
-			Since:    since,
-			Kind:     "down",
+			ID:          "http-" + id,
+			Source:      SourceHTTP,
+			Severity:    "warning",
+			Hostname:    name,
+			Message:     "HTTP check failing (" + httpURL + ")",
+			Since:       since,
+			Kind:        "down",
+			subjectType: "device",
+			subjectID:   id,
 		})
 	}
 	return out, rows.Err()
@@ -329,13 +378,15 @@ func (r Repository) recoveredHTTP(ctx context.Context) ([]Active, error) {
 			return nil, err
 		}
 		out = append(out, Active{
-			ID:       "http-recovered-" + id,
-			Source:   SourceHTTP,
-			Severity: "info",
-			Hostname: name,
-			Message:  "HTTP check recovered (" + httpURL + ")",
-			Since:    since,
-			Kind:     "up",
+			ID:          "http-recovered-" + id,
+			Source:      SourceHTTP,
+			Severity:    "info",
+			Hostname:    name,
+			Message:     "HTTP check recovered (" + httpURL + ")",
+			Since:       since,
+			Kind:        "up",
+			subjectType: "device",
+			subjectID:   id,
 		})
 	}
 	return out, rows.Err()
@@ -381,13 +432,15 @@ func (r Repository) certExpiringSoon(ctx context.Context) ([]Active, error) {
 			severity = "critical"
 		}
 		out = append(out, Active{
-			ID:       "cert-expiry-" + id,
-			Source:   SourceHTTP,
-			Severity: severity,
-			Hostname: name,
-			Message:  fmt.Sprintf("TLS certificate for %s expires in %.0f day(s)", httpURL, daysLeft),
-			Since:    since,
-			Kind:     "down",
+			ID:          "cert-expiry-" + id,
+			Source:      SourceHTTP,
+			Severity:    severity,
+			Hostname:    name,
+			Message:     fmt.Sprintf("TLS certificate for %s expires in %.0f day(s)", httpURL, daysLeft),
+			Since:       since,
+			Kind:        "down",
+			subjectType: "device",
+			subjectID:   id,
 		})
 	}
 	return out, rows.Err()

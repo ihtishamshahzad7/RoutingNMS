@@ -15,16 +15,16 @@ import (
 )
 
 type Page struct {
-	ID                     int64     `json:"id"`
-	TenantID               string    `json:"tenantId"`
-	Slug                   string    `json:"slug"`
-	Title                  string    `json:"title"`
-	Description            string    `json:"description"`
-	Published              bool      `json:"published"`
-	ShowCertificateExpiry  bool      `json:"showCertificateExpiry"`
-	FooterText             string    `json:"footerText"`
-	CreatedAt              time.Time `json:"createdAt"`
-	UpdatedAt              time.Time `json:"updatedAt"`
+	ID                    int64     `json:"id"`
+	TenantID              string    `json:"tenantId"`
+	Slug                  string    `json:"slug"`
+	Title                 string    `json:"title"`
+	Description           string    `json:"description"`
+	Published             bool      `json:"published"`
+	ShowCertificateExpiry bool      `json:"showCertificateExpiry"`
+	FooterText            string    `json:"footerText"`
+	CreatedAt             time.Time `json:"createdAt"`
+	UpdatedAt             time.Time `json:"updatedAt"`
 }
 
 type Item struct {

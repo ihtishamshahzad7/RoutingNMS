@@ -21,15 +21,16 @@ import (
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/devices"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/discovery"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/incidents"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/maintenance"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/metricsdb"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/mib"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/olt"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/ping"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/provisioning"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/sites"
-	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/statuspage"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/snmp"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/snmptrap"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/statuspage"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/syslog"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/topology"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -343,7 +344,7 @@ func main() {
 		// + recent critical/warning SNMP traps), polled by the browser
 		// voice-alert feature so it doesn't have to stitch three APIs
 		// together itself.
-		mux.Handle("GET /api/v1/alerts/active", authHandler.Middleware(alertsfeed.API{Repo: alertsfeed.Repository{DB: db}}))
+		mux.Handle("GET /api/v1/alerts/active", authHandler.Middleware(alertsfeed.API{Repo: alertsfeed.Repository{DB: db, Maintenance: maintenance.Checker{DB: db}}}))
 
 		// RouterOS auto-provisioning: admin pre-registers a router device
 		// (with its serial number) and assigns a script template; the
@@ -382,6 +383,14 @@ func main() {
 		mux.Handle("DELETE /api/v1/status-pages/{id}", authHandler.Middleware(statuspage.AdminAPI{Repo: statusPageRepo}))
 		mux.Handle("PUT /api/v1/status-pages/{id}/items", authHandler.Middleware(statuspage.ItemsAPI{Repo: statusPageRepo}))
 		mux.Handle("GET /api/v1/public/status/{slug}", statuspage.PublicAPI{Repo: statusPageRepo, Resolver: statuspage.StatusResolver{DB: db}})
+
+		maintenanceRepo := maintenance.Repository{DB: db}
+		mux.Handle("GET /api/v1/maintenance-windows", authHandler.Middleware(maintenance.AdminAPI{Repo: maintenanceRepo}))
+		mux.Handle("POST /api/v1/maintenance-windows", authHandler.Middleware(maintenance.AdminAPI{Repo: maintenanceRepo}))
+		mux.Handle("GET /api/v1/maintenance-windows/{id}", authHandler.Middleware(maintenance.AdminAPI{Repo: maintenanceRepo}))
+		mux.Handle("PUT /api/v1/maintenance-windows/{id}", authHandler.Middleware(maintenance.AdminAPI{Repo: maintenanceRepo}))
+		mux.Handle("DELETE /api/v1/maintenance-windows/{id}", authHandler.Middleware(maintenance.AdminAPI{Repo: maintenanceRepo}))
+		mux.Handle("PUT /api/v1/maintenance-windows/{id}/items", authHandler.Middleware(maintenance.ItemsAPI{Repo: maintenanceRepo}))
 
 		// Sprint 3 — ISP features: physical sites, wireless access points,
 		// and subscriber customer connections (migration 0018). Session-authed
@@ -471,6 +480,12 @@ func main() {
 		mux.HandleFunc("DELETE /api/v1/status-pages/{id}", unavailable)
 		mux.HandleFunc("PUT /api/v1/status-pages/{id}/items", unavailable)
 		mux.HandleFunc("GET /api/v1/public/status/{slug}", unavailable)
+		mux.HandleFunc("GET /api/v1/maintenance-windows", unavailable)
+		mux.HandleFunc("POST /api/v1/maintenance-windows", unavailable)
+		mux.HandleFunc("GET /api/v1/maintenance-windows/{id}", unavailable)
+		mux.HandleFunc("PUT /api/v1/maintenance-windows/{id}", unavailable)
+		mux.HandleFunc("DELETE /api/v1/maintenance-windows/{id}", unavailable)
+		mux.HandleFunc("PUT /api/v1/maintenance-windows/{id}/items", unavailable)
 		mux.HandleFunc("POST /api/v1/ai/assistant", unavailable)
 	}
 
