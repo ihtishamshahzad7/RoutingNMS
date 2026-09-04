@@ -14,6 +14,7 @@ export type VoiceAlertSettings = {
   sources: Record<AlertSource, boolean>; // "alert type" filter -- which subsystem to announce
   severities: Record<AlertSeverity, boolean>;
   mutedHostnames: string[]; // per-device/OLT mute list
+  announceRecoveries: boolean; // speak "back up" events, not just "down" ones -- independent of the severity filter, since a recovery is reported as info-level regardless of how severe the original outage was
 };
 
 export const DEFAULT_VOICE_ALERT_SETTINGS: VoiceAlertSettings = {
@@ -23,6 +24,7 @@ export const DEFAULT_VOICE_ALERT_SETTINGS: VoiceAlertSettings = {
   sources: { olt: true, device: true, trap: true },
   severities: { critical: true, warning: true, info: false },
   mutedHostnames: [],
+  announceRecoveries: true,
 };
 
 const STORAGE_KEY = "routingnms.voiceAlertSettings";

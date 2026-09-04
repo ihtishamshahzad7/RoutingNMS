@@ -32,6 +32,12 @@ type Active struct {
 	Hostname string    `json:"hostname"` // device/OLT name, or the trap's source IP when no name is known
 	Message  string    `json:"message"`
 	Since    time.Time `json:"since"`
+	// Kind distinguishes a still-ongoing problem ("down", the default,
+	// omitted from JSON for backward compatibility with existing clients)
+	// from a just-recovered one ("up") -- an OLT alert that cleared, or a
+	// device whose latest health sample flipped back to reachable, within
+	// RecoveryLookback. The voice-alert feature announces both.
+	Kind string `json:"kind,omitempty"`
 }
 
 type Repository struct{ DB *pgxpool.Pool }
@@ -42,8 +48,14 @@ type Repository struct{ DB *pgxpool.Pool }
 // no natural "still ongoing" state, so recency is used as a proxy.
 const TrapLookback = 15 * time.Minute
 
-// List returns every currently-active alert across all three sources,
-// newest first.
+// RecoveryLookback bounds how long a resolved OLT alert or a device that
+// just came back up still counts as "recently recovered" -- like
+// TrapLookback, recency is the only signal available since a recovery is a
+// one-shot transition, not an ongoing state.
+const RecoveryLookback = 15 * time.Minute
+
+// List returns every currently-active alert (still down) plus every
+// recently-recovered one (back up), across all three sources, newest first.
 func (r Repository) List(ctx context.Context) ([]Active, error) {
 	if r.DB == nil {
 		return nil, nil
@@ -56,11 +68,23 @@ func (r Repository) List(ctx context.Context) ([]Active, error) {
 	}
 	out = append(out, oltAlerts...)
 
+	oltRecovered, err := r.oltRecovered(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, oltRecovered...)
+
 	deviceAlerts, err := r.downDevices(ctx)
 	if err != nil {
 		return nil, err
 	}
 	out = append(out, deviceAlerts...)
+
+	deviceRecovered, err := r.recoveredDevices(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, deviceRecovered...)
 
 	trapAlerts, err := r.recentTraps(ctx)
 	if err != nil {
@@ -91,6 +115,36 @@ func (r Repository) oltAlerts(ctx context.Context) ([]Active, error) {
 		}
 		a.ID = "olt-" + strconv.FormatInt(id, 10)
 		a.Source = SourceOLT
+		a.Kind = "down"
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// oltRecovered finds OLT alerts that cleared within RecoveryLookback -- an
+// operator who just heard "critical alert on OLT-3" wants to also hear when
+// it clears.
+func (r Repository) oltRecovered(ctx context.Context) ([]Active, error) {
+	rows, err := r.DB.Query(ctx, `
+		SELECT a.id, a.severity, o.name, a.message, a.cleared_at
+		FROM olt_alerts a
+		JOIN olts o ON o.id = a.olt_id
+		WHERE a.status = 'cleared' AND a.cleared_at >= $1
+		ORDER BY a.cleared_at DESC`, time.Now().Add(-RecoveryLookback))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Active{}
+	for rows.Next() {
+		var id int64
+		var a Active
+		if err := rows.Scan(&id, &a.Severity, &a.Hostname, &a.Message, &a.Since); err != nil {
+			return nil, err
+		}
+		a.ID = "olt-recovered-" + strconv.FormatInt(id, 10)
+		a.Source = SourceOLT
+		a.Kind = "up"
 		out = append(out, a)
 	}
 	return out, rows.Err()
@@ -130,6 +184,53 @@ func (r Repository) downDevices(ctx context.Context) ([]Active, error) {
 			Hostname: name,
 			Message:  "device unreachable (" + address + ")",
 			Since:    since,
+			Kind:     "down",
+		})
+	}
+	return out, rows.Err()
+}
+
+// recoveredDevices finds devices whose latest "up" metric sample flipped
+// back to reachable (value=1) after a most-recent-prior sample that was
+// down (value=0), recorded within RecoveryLookback -- i.e. it just came
+// back up, not merely "is currently up and always was".
+func (r Repository) recoveredDevices(ctx context.Context) ([]Active, error) {
+	rows, err := r.DB.Query(ctx, `
+		WITH ranked AS (
+			SELECT subject_id, value, recorded_at,
+				LAG(value) OVER (PARTITION BY subject_id ORDER BY recorded_at) AS prev_value
+			FROM metric_samples
+			WHERE subject_type = 'device' AND metric_name = 'up'
+		),
+		latest AS (
+			SELECT DISTINCT ON (subject_id) subject_id, value, prev_value, recorded_at
+			FROM ranked
+			ORDER BY subject_id, recorded_at DESC
+		)
+		SELECT d.id, d.name, d.address, l.recorded_at
+		FROM latest l
+		JOIN devices d ON d.id::text = l.subject_id
+		WHERE l.value = 1 AND l.prev_value = 0 AND l.recorded_at >= $1 AND d.enabled = true
+		ORDER BY l.recorded_at DESC`, time.Now().Add(-RecoveryLookback))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Active{}
+	for rows.Next() {
+		var id, name, address string
+		var since time.Time
+		if err := rows.Scan(&id, &name, &address, &since); err != nil {
+			return nil, err
+		}
+		out = append(out, Active{
+			ID:       "device-recovered-" + id,
+			Source:   SourceDevice,
+			Severity: "info",
+			Hostname: name,
+			Message:  "device back online (" + address + ")",
+			Since:    since,
+			Kind:     "up",
 		})
 	}
 	return out, rows.Err()
@@ -155,6 +256,7 @@ func (r Repository) recentTraps(ctx context.Context) ([]Active, error) {
 		}
 		a.ID = "trap-" + strconv.FormatInt(id, 10)
 		a.Source = SourceTrap
+		a.Kind = "down"
 		a.Message = "SNMP trap " + trapOID
 		out = append(out, a)
 	}

@@ -18,12 +18,21 @@ type ActiveAlert = {
   hostname: string;
   message: string;
   since: string;
+  // "down" (default, may be omitted by older backends) for a still-ongoing
+  // problem, "up" for a just-recovered one (an OLT alert that cleared, or
+  // a device that came back reachable).
+  kind?: "down" | "up";
 };
 
 const POLL_MS = 15000;
 const SOURCE_LABEL: Record<AlertSource, string> = { olt: "OLT alert", device: "Device", trap: "SNMP trap" };
 
 function speechText(a: ActiveAlert): string {
+  if (a.kind === "up") {
+    if (a.source === "device") return `${a.hostname} is back up.`;
+    if (a.source === "olt") return `Alert cleared on ${a.hostname}. ${a.message}.`;
+    return `Recovered: ${a.hostname}. ${a.message}.`;
+  }
   if (a.source === "device") return `${a.severity}. ${a.hostname} is down.`;
   if (a.source === "olt") return `${a.severity} alert on ${a.hostname}. ${a.message}.`;
   return `${a.severity} SNMP trap from ${a.hostname}. ${a.message}.`;
@@ -33,9 +42,11 @@ function speechText(a: ActiveAlert): string {
  * Mounted once in the (noc) layout, so it's present for every authenticated
  * browser session -- it polls the unified active-alerts feed and speaks new
  * or still-active (past the repeat interval) alerts aloud via the Web
- * Speech API, saying what's down and its hostname. A floating control lets
- * an operator mute it, tune the repeat interval/volume, filter by alert
- * type (OLT/device/SNMP trap) and severity, and mute individual hosts.
+ * Speech API, saying what's down (and, separately, what just came back up)
+ * and its hostname. A floating control lets an operator mute it, tune the
+ * repeat interval/volume, filter by alert type (OLT/device/SNMP trap) and
+ * severity, toggle recovery ("back up") announcements, and mute individual
+ * hosts.
  */
 export default function VoiceAlerts() {
   const [settings, setSettings] = useState<VoiceAlertSettings>(DEFAULT_VOICE_ALERT_SETTINGS);
@@ -76,7 +87,9 @@ export default function VoiceAlerts() {
     const now = Date.now();
     const s = settingsRef.current;
     for (const a of alerts) {
-      if (!s.sources[a.source] || !s.severities[a.severity]) continue;
+      if (!s.sources[a.source]) continue;
+      if (a.kind === "up") { if (!s.announceRecoveries) continue; }
+      else if (!s.severities[a.severity]) continue;
       if (s.mutedHostnames.includes(a.hostname)) continue;
       const last = lastSpokenRef.current.get(a.id) ?? 0;
       if (now - last < s.repeatIntervalSeconds * 1000) continue;
@@ -116,7 +129,9 @@ export default function VoiceAlerts() {
   }
 
   const hostsSeen = Array.from(new Set(alerts.map(a => a.hostname))).sort();
-  const audible = alerts.filter(a => settings.sources[a.source] && settings.severities[a.severity] && !settings.mutedHostnames.includes(a.hostname));
+  // Only still-down alerts drive the urgent (red) badge -- a recovery
+  // shouldn't make the bell look like there's an active problem.
+  const downCount = alerts.filter(a => a.kind !== "up" && settings.sources[a.source] && settings.severities[a.severity] && !settings.mutedHostnames.includes(a.hostname)).length;
 
   return (
     <div className="fixed bottom-5 right-5 z-40 flex flex-col items-end gap-2">
@@ -139,6 +154,11 @@ export default function VoiceAlerts() {
           <label className="mb-3 flex items-center justify-between text-xs text-slate-300">
             <span>Enabled</span>
             <input type="checkbox" checked={settings.enabled} onChange={e => update({ enabled: e.target.checked })} className="h-4 w-4" />
+          </label>
+
+          <label className="mb-3 flex items-center justify-between text-xs text-slate-300">
+            <span>Announce recoveries ("back up")</span>
+            <input type="checkbox" checked={settings.announceRecoveries} onChange={e => update({ announceRecoveries: e.target.checked })} className="h-4 w-4" />
           </label>
 
           <label className="mb-3 block text-xs text-slate-300">
@@ -190,12 +210,12 @@ export default function VoiceAlerts() {
       <button
         onClick={() => setPanelOpen(o => !o)}
         className={`flex h-12 w-12 items-center justify-center rounded-full border shadow-lg ${
-          audible.length > 0 ? "border-red-800 bg-red-950 text-red-300" : "border-slate-700 bg-slate-900 text-slate-400"
+          downCount > 0 ? "border-red-800 bg-red-950 text-red-300" : "border-slate-700 bg-slate-900 text-slate-400"
         }`}
         title="Voice alert settings"
       >
         <span className="text-lg">{settings.enabled ? "🔔" : "🔕"}</span>
-        {audible.length > 0 && <span className="absolute -mt-6 -mr-6 rounded-full bg-red-600 px-1.5 text-[10px] font-bold text-white">{audible.length}</span>}
+        {downCount > 0 && <span className="absolute -mt-6 -mr-6 rounded-full bg-red-600 px-1.5 text-[10px] font-bold text-white">{downCount}</span>}
       </button>
     </div>
   );
