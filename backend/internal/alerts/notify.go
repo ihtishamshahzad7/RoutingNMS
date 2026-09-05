@@ -3,6 +3,7 @@ package alerts
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -69,6 +70,14 @@ func (n Notifier) dispatch(client *http.Client, ch PersistedChannel, title, body
 		err = sendWhatsApp(ctx, client, ch, message)
 	case "discord":
 		err = sendDiscord(ctx, client, ch, message)
+	case "teams":
+		err = sendTeams(ctx, client, ch, title, message, severity)
+	case "ntfy":
+		err = sendNtfy(ctx, client, ch, message, severity)
+	case "gotify":
+		err = sendGotify(ctx, client, ch, message)
+	case "pushover":
+		err = sendPushover(ctx, client, ch, message)
 	default:
 		err = fmt.Errorf("unsupported channel type %q", ch.ChannelType)
 	}
@@ -239,6 +248,161 @@ func sendDiscord(ctx context.Context, client *http.Client, ch PersistedChannel, 
 		return err
 	}
 	return postJSON(ctx, client, webhookURL, bodyBytes, nil)
+}
+
+// sendTeams posts a Microsoft Teams "MessageCard" to an incoming webhook,
+// ported from Uptime Kuma's Teams notification provider. Config:
+// webhook_url (Teams "Configure incoming webhook" URL).
+func sendTeams(ctx context.Context, client *http.Client, ch PersistedChannel, title, message, severity string) error {
+	webhookURL := cfgString(ch.Config, "webhook_url", "url")
+	if webhookURL == "" {
+		return fmt.Errorf("webhook_url is required")
+	}
+	down := severity != "resolved"
+	var themeColor, summary string
+	if down {
+		themeColor = "ff0000"
+		summary = fmt.Sprintf("\U0001F534 Application %s went down", title)
+	} else {
+		themeColor = "00e804"
+		summary = fmt.Sprintf("✅ Application %s is back online", title)
+	}
+	facts := []map[string]any{{"name": "Monitor", "value": title}}
+	section := map[string]any{
+		"activityTitle": summary,
+		"facts":         facts,
+	}
+	payload := map[string]any{
+		"@context":   "https://schema.org/extensions",
+		"@type":      "MessageCard",
+		"themeColor": themeColor,
+		"summary":    summary,
+		"sections":   []map[string]any{section},
+	}
+	_ = message // message is folded into the card via the facts above
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return postJSON(ctx, client, webhookURL, bodyBytes, nil)
+}
+
+// sendNtfy posts to an ntfy server/topic, ported from Uptime Kuma's ntfy
+// notification provider. Config: server_url (e.g.
+// https://ntfy.sh), topic, priority (1-5, default 4), auth_method
+// ("usernamePassword" or "accessToken"), username, password, access_token.
+func sendNtfy(ctx context.Context, client *http.Client, ch PersistedChannel, message, severity string) error {
+	serverURL := cfgString(ch.Config, "server_url", "url")
+	topic := cfgString(ch.Config, "topic")
+	if serverURL == "" || topic == "" {
+		return fmt.Errorf("server_url and topic are required")
+	}
+	priority := 4
+	if p := cfgString(ch.Config, "priority"); p != "" {
+		if n, err := strconv.Atoi(p); err == nil {
+			priority = n
+		}
+	}
+	down := severity != "resolved"
+	tag := "green_circle"
+	title := "Up [RoutingNMS]"
+	if down {
+		if priority < 5 {
+			priority++
+		}
+		tag = "red_circle"
+		title = "Down [RoutingNMS]"
+	}
+	payload := map[string]any{
+		"topic":    topic,
+		"message":  message,
+		"priority": priority,
+		"title":    title,
+		"tags":     []string{tag},
+	}
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	headers := map[string]string{}
+	switch cfgString(ch.Config, "auth_method") {
+	case "usernamePassword":
+		user := cfgString(ch.Config, "username")
+		pass := cfgString(ch.Config, "password")
+		token := base64.StdEncoding.EncodeToString([]byte(user + ":" + pass))
+		headers["Authorization"] = "Basic " + token
+	case "accessToken":
+		headers["Authorization"] = "Bearer " + cfgString(ch.Config, "access_token")
+	}
+	return postJSON(ctx, client, serverURL, bodyBytes, headers)
+}
+
+// sendGotify posts to a self-hosted Gotify server, ported from Uptime
+// Kuma's Gotify notification provider. Config: server_url, app_token,
+// priority (default 8).
+func sendGotify(ctx context.Context, client *http.Client, ch PersistedChannel, message string) error {
+	serverURL := strings.TrimRight(cfgString(ch.Config, "server_url", "url"), "/")
+	appToken := cfgString(ch.Config, "app_token", "token")
+	if serverURL == "" || appToken == "" {
+		return fmt.Errorf("server_url and app_token are required")
+	}
+	priority := 8
+	if p := cfgString(ch.Config, "priority"); p != "" {
+		if n, err := strconv.Atoi(p); err == nil {
+			priority = n
+		}
+	}
+	payload := map[string]any{
+		"message":  message,
+		"priority": priority,
+		"title":    "RoutingNMS",
+	}
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	endpoint := fmt.Sprintf("%s/message?token=%s", serverURL, url.QueryEscape(appToken))
+	return postJSON(ctx, client, endpoint, bodyBytes, nil)
+}
+
+// sendPushover posts to the Pushover Messages API, ported from Uptime
+// Kuma's Pushover notification provider. Config: user_key, app_token,
+// sound, priority, title, device, ttl (all but user_key/app_token
+// optional).
+func sendPushover(ctx context.Context, client *http.Client, ch PersistedChannel, message string) error {
+	userKey := cfgString(ch.Config, "user_key")
+	appToken := cfgString(ch.Config, "app_token", "token")
+	if userKey == "" || appToken == "" {
+		return fmt.Errorf("user_key and app_token are required")
+	}
+	payload := map[string]any{
+		"message": message,
+		"user":    userKey,
+		"token":   appToken,
+		"retry":   "30",
+		"expire":  "3600",
+		"html":    1,
+	}
+	if v := cfgString(ch.Config, "sound"); v != "" {
+		payload["sound"] = v
+	}
+	if v := cfgString(ch.Config, "priority"); v != "" {
+		payload["priority"] = v
+	}
+	if v := cfgString(ch.Config, "title"); v != "" {
+		payload["title"] = v
+	}
+	if v := cfgString(ch.Config, "device"); v != "" {
+		payload["device"] = v
+	}
+	if v := cfgString(ch.Config, "ttl"); v != "" {
+		payload["ttl"] = v
+	}
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return postJSON(ctx, client, "https://api.pushover.net/1/messages.json", bodyBytes, nil)
 }
 
 func postJSON(ctx context.Context, client *http.Client, targetURL string, body []byte, headers map[string]string) error {

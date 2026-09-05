@@ -266,6 +266,30 @@ const CHANNEL_FIELDS: Record<string, [string, string][]> = {
     ["to", "To (e.g. whatsapp:+15551234567)"],
   ],
   discord: [["webhook_url", "Discord webhook URL (Server Settings → Integrations → Webhooks)"]],
+  teams: [["webhook_url", "Teams incoming webhook URL"]],
+  ntfy: [
+    ["server_url", "ntfy server/topic URL (e.g. https://ntfy.sh)"],
+    ["topic", "Topic"],
+    ["priority", "Priority 1-5 (optional, default 4)"],
+    ["auth_method", "Auth method: usernamePassword / accessToken (optional)"],
+    ["username", "Username (optional)"],
+    ["password", "Password (optional)"],
+    ["access_token", "Access token (optional)"],
+  ],
+  gotify: [
+    ["server_url", "Gotify server URL"],
+    ["app_token", "Application token"],
+    ["priority", "Priority (optional, default 8)"],
+  ],
+  pushover: [
+    ["user_key", "User key"],
+    ["app_token", "API token/key"],
+    ["sound", "Sound (optional)"],
+    ["priority", "Priority (optional)"],
+    ["title", "Title (optional)"],
+    ["device", "Device (optional)"],
+    ["ttl", "TTL seconds (optional)"],
+  ],
 };
 
 function ChannelForm({ onSaved }: { onSaved: () => void }) {
@@ -293,7 +317,7 @@ function ChannelForm({ onSaved }: { onSaved: () => void }) {
       <div className="flex flex-wrap gap-3">
         <input className="input" placeholder="Channel name" value={name} onChange={e => setName(e.target.value)} />
         <select className="input" value={type} onChange={e => changeType(e.target.value)}>
-          {["webhook", "slack", "email", "pagerduty", "telegram", "whatsapp", "discord"].map(t => <option key={t} value={t}>{t}</option>)}
+          {["webhook", "slack", "email", "pagerduty", "telegram", "whatsapp", "discord", "teams", "ntfy", "gotify", "pushover"].map(t => <option key={t} value={t}>{t}</option>)}
         </select>
         {required.map(([key, placeholder]) => (
           <input
