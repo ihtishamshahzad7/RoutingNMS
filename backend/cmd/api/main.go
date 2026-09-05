@@ -31,9 +31,12 @@ import (
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/sites"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/snmp"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/snmptrap"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/sshcheck"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/statuspage"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/syslog"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/tags"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/telnetcheck"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/topolinks"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/topology"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/traceroute"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -79,6 +82,9 @@ func main() {
 	var oltRuntime *olt.RuntimeManager
 	var pingPoller *ping.Poller
 	var dnsPoller *dnscheck.Poller
+	var sshPoller *sshcheck.Poller
+	var telnetPoller *telnetcheck.Poller
+	var topoLinkPoller *topolinks.Poller
 	var topologyEngine *topology.Discovery
 	var incidentEngine *incidents.Engine
 	var incidentStream *incidents.Stream
@@ -168,6 +174,22 @@ func main() {
 		dnsPollInterval := time.Duration(envInt("DNS_POLL_INTERVAL_SECONDS", 30)) * time.Second
 		go dnsPoller.Run(ctx, dnsPollInterval)
 
+		// SSH/Telnet reachability monitors: TCP-connect + optional banner
+		// match, same "optional per-device monitor type" pattern as DNS/push
+		// above.
+		sshPoller = sshcheck.New(sshcheck.Repository{DB: db}, metricsdb.Repository{DB: db})
+		go sshPoller.Run(ctx, dnsPollInterval)
+		telnetPoller = telnetcheck.New(telnetcheck.Repository{DB: db}, metricsdb.Repository{DB: db})
+		go telnetPoller.Run(ctx, dnsPollInterval)
+
+		// Group-wise, port-level topology link monitor: polls SNMP
+		// ifOperStatus for both named interfaces on every manually-defined
+		// topo_links row and records up/down, feeding alertsfeed's
+		// "group X device Y port Z down" alerts.
+		topoLinkPoller = topolinks.New(topolinks.Repository{DB: db}, devices.Repository{DB: db}, metricsdb.Repository{DB: db})
+		topoLinkPollInterval := time.Duration(envInt("TOPOLOGY_LINK_POLL_INTERVAL_SECONDS", 60)) * time.Second
+		go topoLinkPoller.Run(ctx, topoLinkPollInterval)
+
 		// Push heartbeat monitor down-detection sweep (ported from Uptime
 		// Kuma's "Push" monitor type): unlike every other monitor type here,
 		// nothing is polled -- the monitored thing calls RoutingNMS on its
@@ -221,6 +243,8 @@ func main() {
 		mux.Handle("PUT /api/v1/devices/{id}/icmp-check", authHandler.Middleware(http.HandlerFunc(deviceHandler.UpdateICMPCheck)))
 		mux.Handle("PUT /api/v1/devices/{id}/dns-check", authHandler.Middleware(http.HandlerFunc(deviceHandler.UpdateDNSCheck)))
 		mux.Handle("PUT /api/v1/devices/{id}/push-check", authHandler.Middleware(http.HandlerFunc(deviceHandler.UpdatePushCheck)))
+		mux.Handle("PUT /api/v1/devices/{id}/ssh-check", authHandler.Middleware(http.HandlerFunc(deviceHandler.UpdateSSHCheck)))
+		mux.Handle("PUT /api/v1/devices/{id}/telnet-check", authHandler.Middleware(http.HandlerFunc(deviceHandler.UpdateTelnetCheck)))
 		mux.Handle("POST /api/v1/devices/", authHandler.Middleware(http.HandlerFunc(discoveryHandler.Discover)))
 		mux.Handle("GET /api/v1/devices/", authHandler.Middleware(http.HandlerFunc(discoveryHandler.Interfaces)))
 
@@ -375,6 +399,50 @@ func main() {
 			http.NotFound(w, r)
 		})))
 
+		// SSH/Telnet reachability monitor live/check, mirroring the DNS
+		// live/check routes above.
+		sshAPI := sshcheck.API{Devices: devicesRepo, Poller: sshPoller}
+		mux.Handle("GET /api/v1/ssh/", authHandler.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/live") {
+				sshAPI.Live(w, r)
+				return
+			}
+			http.NotFound(w, r)
+		})))
+		mux.Handle("POST /api/v1/ssh/", authHandler.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/check") {
+				sshAPI.Check(w, r)
+				return
+			}
+			http.NotFound(w, r)
+		})))
+		telnetAPI := telnetcheck.API{Devices: devicesRepo, Poller: telnetPoller}
+		mux.Handle("GET /api/v1/telnet/", authHandler.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/live") {
+				telnetAPI.Live(w, r)
+				return
+			}
+			http.NotFound(w, r)
+		})))
+		mux.Handle("POST /api/v1/telnet/", authHandler.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/check") {
+				telnetAPI.Check(w, r)
+				return
+			}
+			http.NotFound(w, r)
+		})))
+
+		// Group-wise topology link mapping: CRUD for groups/links and a
+		// live-status endpoint, as called by frontend's topology-links page.
+		topoLinksRepo := topolinks.Repository{DB: db}
+		mux.Handle("GET /api/v1/topology-groups", authHandler.Middleware(topolinks.GroupsAPI{Repo: topoLinksRepo}))
+		mux.Handle("POST /api/v1/topology-groups", authHandler.Middleware(topolinks.GroupsAPI{Repo: topoLinksRepo}))
+		mux.Handle("DELETE /api/v1/topology-groups/{id}", authHandler.Middleware(topolinks.GroupAPI{Repo: topoLinksRepo}))
+		mux.Handle("GET /api/v1/topology-groups/{id}/links", authHandler.Middleware(topolinks.LinksAPI{Repo: topoLinksRepo}))
+		mux.Handle("POST /api/v1/topology-groups/{id}/links", authHandler.Middleware(topolinks.LinksAPI{Repo: topoLinksRepo}))
+		mux.Handle("GET /api/v1/topology-groups/{id}/status", authHandler.Middleware(topolinks.StatusAPI{Repo: topoLinksRepo, Poller: topoLinkPoller}))
+		mux.Handle("DELETE /api/v1/topology-links/{id}", authHandler.Middleware(topolinks.LinkAPI{Repo: topoLinksRepo}))
+
 		// Push heartbeat monitor receive endpoint -- ported from Uptime
 		// Kuma's "Push" monitor type. Deliberately registered outside
 		// authHandler.Middleware: the caller is an external cron job/service
@@ -497,8 +565,21 @@ func main() {
 		mux.HandleFunc("PUT /api/v1/devices/{id}/icmp-check", unavailable)
 		mux.HandleFunc("PUT /api/v1/devices/{id}/dns-check", unavailable)
 		mux.HandleFunc("PUT /api/v1/devices/{id}/push-check", unavailable)
+		mux.HandleFunc("PUT /api/v1/devices/{id}/ssh-check", unavailable)
+		mux.HandleFunc("PUT /api/v1/devices/{id}/telnet-check", unavailable)
 		mux.HandleFunc("GET /api/v1/dns/", unavailable)
 		mux.HandleFunc("POST /api/v1/dns/", unavailable)
+		mux.HandleFunc("GET /api/v1/ssh/", unavailable)
+		mux.HandleFunc("POST /api/v1/ssh/", unavailable)
+		mux.HandleFunc("GET /api/v1/telnet/", unavailable)
+		mux.HandleFunc("POST /api/v1/telnet/", unavailable)
+		mux.HandleFunc("GET /api/v1/topology-groups", unavailable)
+		mux.HandleFunc("POST /api/v1/topology-groups", unavailable)
+		mux.HandleFunc("DELETE /api/v1/topology-groups/{id}", unavailable)
+		mux.HandleFunc("GET /api/v1/topology-groups/{id}/links", unavailable)
+		mux.HandleFunc("POST /api/v1/topology-groups/{id}/links", unavailable)
+		mux.HandleFunc("GET /api/v1/topology-groups/{id}/status", unavailable)
+		mux.HandleFunc("DELETE /api/v1/topology-links/{id}", unavailable)
 		mux.HandleFunc("GET /api/v1/push/{token}", unavailable)
 		mux.HandleFunc("POST /api/v1/devices/", unavailable)
 		mux.HandleFunc("GET /api/v1/devices/", unavailable)
