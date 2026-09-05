@@ -33,7 +33,13 @@ type Evaluator struct {
 	lastEval    int
 	lastFired   int
 	running     bool
-	breachSince map[string]time.Time // "ruleID:deviceID" -> first breach seen
+	breachSince map[string]time.Time // "ruleID:metric:deviceID" -> first breach seen
+	// resendTicks counts, per the same "ruleID:metric:deviceID" key as
+	// breachSince, consecutive breaching ticks since the alert last fired
+	// (not since the breach started) -- so a rule with ResendInterval > 0
+	// resends the notification every ResendInterval ticks, evenly spaced,
+	// for as long as the breach stays open.
+	resendTicks map[string]int
 }
 
 // NewEvaluator wires a fresh in-memory Engine. interval <= 0 defaults to 60s.
@@ -46,6 +52,7 @@ func NewEvaluator(repo Repository, live *incidents.Engine, stream *incidents.Str
 		Interval:    60 * time.Second,
 		Lookback:    3 * time.Minute,
 		breachSince: map[string]time.Time{},
+		resendTicks: map[string]int{},
 	}
 }
 
@@ -150,7 +157,7 @@ func evaluateImmediate(e *Evaluator, ctx context.Context, pr PersistedRule, rule
 		}
 		*evaluated++
 
-		matched := matches(rule.Operator, engineSample.Value, rule.Threshold)
+		matched := breaches(rule, engineSample.Value)
 		if !matched {
 			// Condition cleared: recover the alert if it was active. Engine.Recover
 			// (keyed by rule.Key+DeviceID, same scoping as breachSince above) only
@@ -158,6 +165,7 @@ func evaluateImmediate(e *Evaluator, ctx context.Context, pr PersistedRule, rule
 			// alert transitions back to normal, so this fires exactly once per
 			// recovery -- never on subsequent healthy ticks.
 			e.clearBreach(breachKey)
+			e.resetResend(breachKey)
 			if recoveredAlert, recovered := e.Engine.Recover(rule, engineSample); recovered {
 				log.Printf("alerts evaluator: recovered rule %s on device %s", rule.Key, deviceID)
 				recoveredAlert.Value = engineSample.Value // report the current (normal) value, not the original breach value
@@ -174,11 +182,29 @@ func evaluateImmediate(e *Evaluator, ctx context.Context, pr PersistedRule, rule
 			}
 		}
 		alert, isNew := e.Engine.Evaluate(rule, engineSample)
-		if !isNew {
-			continue // already fired; don't re-open an incident
+		if isNew {
+			*fired++
+			e.resetResend(breachKey)
+			e.fire(ctx, *alert, pr)
+			continue
 		}
-		*fired++
-		e.fire(ctx, *alert, pr)
+		// Already fired and still breaching. If the rule opts into resend
+		// (Uptime Kuma's "resend notification" interval), count consecutive
+		// breaching ticks since the last notification (not since the breach
+		// started) and re-notify once that count reaches ResendInterval,
+		// resetting so the next resend is evenly spaced the same distance
+		// later. ResendInterval == 0 keeps the pre-existing behavior: fire
+		// once at breach, silent until recovery.
+		if rule.ResendInterval > 0 {
+			ticks := e.bumpResend(breachKey)
+			if ticks >= rule.ResendInterval {
+				e.resetResend(breachKey)
+				resendAlert := *alert
+				resendAlert.Value = engineSample.Value
+				*fired++
+				e.fire(ctx, resendAlert, pr)
+			}
+		}
 	}
 }
 
@@ -286,10 +312,10 @@ func (e *Evaluator) Status() map[string]any {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return map[string]any{
-		"lastRun":  e.lastRun,
+		"lastRun":   e.lastRun,
 		"evaluated": e.lastEval,
-		"fired":    e.lastFired,
-		"running":  e.running,
+		"fired":     e.lastFired,
+		"running":   e.running,
 	}
 }
 
@@ -308,6 +334,25 @@ func (e *Evaluator) clearBreach(key string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	delete(e.breachSince, key)
+}
+
+// bumpResend increments and returns the consecutive-breaching-ticks-since-
+// last-notification counter for key (same "ruleID:metric:deviceID" scoping
+// as breachSince/Engine.active).
+func (e *Evaluator) bumpResend(key string) int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.resendTicks[key]++
+	return e.resendTicks[key]
+}
+
+// resetResend zeroes (by deleting) the resend counter for key -- called both
+// when a fresh notification just fired (so the next resend is measured from
+// here) and on recovery (so a later re-breach starts the count from zero).
+func (e *Evaluator) resetResend(key string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	delete(e.resendTicks, key)
 }
 
 // alertsSample is the minimal shape the evaluator needs from a metric row.

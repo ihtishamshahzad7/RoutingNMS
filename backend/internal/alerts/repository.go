@@ -21,20 +21,29 @@ type Repository struct{ DB *pgxpool.Pool }
 // PersistedRule is a `alert_rules` row. Condition is the parsed condition_config
 // JSONB (e.g. {"metric":"icmp_loss_pct","operator":">","threshold":30,"unit":"%"}).
 type PersistedRule struct {
-	ID                    int64          `json:"id"`
-	Name                  string         `json:"name"`
-	Description           string         `json:"description"`
-	RuleType              string         `json:"ruleType"`
-	Condition             map[string]any `json:"condition"`
-	Severity              string         `json:"severity"`
-	ForDurationSec        int            `json:"forDurationSec"`
-	CooldownSec           int            `json:"cooldownSec"`
+	ID                     int64          `json:"id"`
+	Name                   string         `json:"name"`
+	Description            string         `json:"description"`
+	RuleType               string         `json:"ruleType"`
+	Condition              map[string]any `json:"condition"`
+	Severity               string         `json:"severity"`
+	ForDurationSec         int            `json:"forDurationSec"`
+	CooldownSec            int            `json:"cooldownSec"`
 	NotificationChannelIDs []int64        `json:"notificationChannelIds"`
-	DeviceGroup           string         `json:"deviceGroup"`
-	Enabled               bool           `json:"enabled"`
-	CreatedBy             *int64         `json:"createdBy,omitempty"`
-	CreatedAt             time.Time      `json:"createdAt"`
-	UpdatedAt             time.Time      `json:"updatedAt"`
+	DeviceGroup            string         `json:"deviceGroup"`
+	Enabled                bool           `json:"enabled"`
+	// ResendInterval: while a breach stays open, re-fire the notification
+	// every ResendInterval consecutive breaching ticks (0 = notify once at
+	// breach only, the pre-existing behavior). Ported from Uptime Kuma's
+	// monitor.resendInterval.
+	ResendInterval int `json:"resendInterval"`
+	// UpsideDown inverts the condition's breach/healthy sense for this rule
+	// (Uptime Kuma's "upside down mode") -- e.g. alert when a honeypot
+	// endpoint responds at all, rather than when it stops responding.
+	UpsideDown bool      `json:"upsideDown"`
+	CreatedBy  *int64    `json:"createdBy,omitempty"`
+	CreatedAt  time.Time `json:"createdAt"`
+	UpdatedAt  time.Time `json:"updatedAt"`
 }
 
 // PersistedChannel is a `notification_channels` row. Config holds arbitrary
@@ -57,7 +66,8 @@ func (r Repository) ListRules(ctx context.Context) ([]PersistedRule, error) {
 		return nil, fmt.Errorf("alerts repository is not initialized")
 	}
 	rows, err := r.DB.Query(ctx, `SELECT id,name,description,rule_type,condition_config,severity,
-		for_duration_sec,cooldown_sec,notification_channel_ids,device_group,is_enabled,created_by,created_at,updated_at
+		for_duration_sec,cooldown_sec,notification_channel_ids,device_group,is_enabled,
+		resend_interval,upside_down,created_by,created_at,updated_at
 		FROM alert_rules ORDER BY id ASC`)
 	if err != nil {
 		return nil, err
@@ -70,7 +80,8 @@ func (r Repository) ListRules(ctx context.Context) ([]PersistedRule, error) {
 		var channels []byte
 		if err := rows.Scan(&rule.ID, &rule.Name, &rule.Description, &rule.RuleType, &cond,
 			&rule.Severity, &rule.ForDurationSec, &rule.CooldownSec, &channels,
-			&rule.DeviceGroup, &rule.Enabled, &rule.CreatedBy, &rule.CreatedAt, &rule.UpdatedAt); err != nil {
+			&rule.DeviceGroup, &rule.Enabled, &rule.ResendInterval, &rule.UpsideDown,
+			&rule.CreatedBy, &rule.CreatedAt, &rule.UpdatedAt); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal(cond, &rule.Condition)
@@ -106,10 +117,11 @@ func (r Repository) SaveRule(ctx context.Context, rule PersistedRule) (Persisted
 		return PersistedRule{}, err
 	}
 	err = r.DB.QueryRow(ctx, `INSERT INTO alert_rules
-		(name,description,rule_type,condition_config,severity,for_duration_sec,cooldown_sec,notification_channel_ids,device_group,is_enabled,created_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id,created_at,updated_at`,
+		(name,description,rule_type,condition_config,severity,for_duration_sec,cooldown_sec,notification_channel_ids,device_group,is_enabled,resend_interval,upside_down,created_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id,created_at,updated_at`,
 		rule.Name, rule.Description, rule.RuleType, cond, rule.Severity,
-		rule.ForDurationSec, rule.CooldownSec, channels, rule.DeviceGroup, rule.Enabled, rule.CreatedBy).
+		rule.ForDurationSec, rule.CooldownSec, channels, rule.DeviceGroup, rule.Enabled,
+		rule.ResendInterval, rule.UpsideDown, rule.CreatedBy).
 		Scan(&rule.ID, &rule.CreatedAt, &rule.UpdatedAt)
 	if err != nil {
 		return PersistedRule{}, err
@@ -142,10 +154,12 @@ func (r Repository) UpdateRule(ctx context.Context, id int64, rule PersistedRule
 	err = r.DB.QueryRow(ctx, `UPDATE alert_rules SET
 		name=$2, description=$3, rule_type=$4, condition_config=$5, severity=$6,
 		for_duration_sec=$7, cooldown_sec=$8, notification_channel_ids=$9, device_group=$10, is_enabled=$11,
+		resend_interval=$12, upside_down=$13,
 		updated_at=NOW()
 		WHERE id=$1 RETURNING id,created_at,updated_at`,
 		id, rule.Name, rule.Description, rule.RuleType, cond, rule.Severity,
-		rule.ForDurationSec, rule.CooldownSec, channels, rule.DeviceGroup, rule.Enabled).
+		rule.ForDurationSec, rule.CooldownSec, channels, rule.DeviceGroup, rule.Enabled,
+		rule.ResendInterval, rule.UpsideDown).
 		Scan(&rule.ID, &rule.CreatedAt, &rule.UpdatedAt)
 	if err != nil {
 		return PersistedRule{}, err
@@ -236,4 +250,3 @@ func (r Repository) DeleteChannel(ctx context.Context, id int64) error {
 	_, err := r.DB.Exec(ctx, `DELETE FROM notification_channels WHERE id=$1`, id)
 	return err
 }
-

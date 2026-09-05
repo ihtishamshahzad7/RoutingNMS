@@ -11,7 +11,7 @@ import { Card } from "../../../components/ui/card";
 import { Button } from "../../../components/ui/primitives";
 
 type RuleCondition = { metric?: string; operator?: string; threshold?: number; unit?: string };
-type Rule = { id: number; name: string; description: string; ruleType: string; condition: RuleCondition; severity: string; forDurationSec: number; cooldownSec: number; notificationChannelIds: number[]; deviceGroup: string; enabled: boolean; createdAt: string; updatedAt: string };
+type Rule = { id: number; name: string; description: string; ruleType: string; condition: RuleCondition; severity: string; forDurationSec: number; cooldownSec: number; notificationChannelIds: number[]; deviceGroup: string; enabled: boolean; resendInterval: number; upsideDown: boolean; createdAt: string; updatedAt: string };
 type Channel = { id: number; name: string; tenantId?: string; channelType: string; config: Record<string, string>; enabled: boolean; createdAt: string };
 type Preset = { id: string; name: string; description: string; ruleType: string; metric: string; operator: string; threshold: number; unit?: string; severity: string };
 
@@ -145,6 +145,8 @@ function RuleForm({ channels, presets, onSaved }: { channels: Channel[]; presets
   const [severity, setSeverity] = useState("warning");
   const [forSec, setForSec] = useState("0");
   const [cooldown, setCooldown] = useState("300");
+  const [resendInterval, setResendInterval] = useState("0");
+  const [upsideDown, setUpsideDown] = useState(false);
   const [channelIds, setChannelIds] = useState<number[]>([]);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
@@ -181,10 +183,12 @@ function RuleForm({ channels, presets, onSaved }: { channels: Channel[]; presets
           cooldownSec: parseInt(cooldown || "300", 10),
           notificationChannelIds: channelIds,
           deviceGroup: "all", enabled: true,
+          resendInterval: parseInt(resendInterval || "0", 10),
+          upsideDown,
           condition: { metric, operator, threshold: parseFloat(threshold || "0"), unit: "%" },
         }),
       });
-      setName(""); setDescription(""); setPresetId("custom"); setMsg("Rule created"); onSaved();
+      setName(""); setDescription(""); setPresetId("custom"); setResendInterval("0"); setUpsideDown(false); setMsg("Rule created"); onSaved();
     } catch { setMsg("Failed to create rule"); }
     finally { setSaving(false); }
   };
@@ -221,6 +225,22 @@ function RuleForm({ channels, presets, onSaved }: { channels: Channel[]; presets
         <select className="input" value={severity} onChange={e => setSeverity(e.target.value)}>{SEVS.map(s => <option key={s} value={s}>{s}</option>)}</select>
         <input className="input w-24" placeholder="for (sec)" value={forSec} onChange={e => setForSec(e.target.value)} />
         <input className="input w-24" placeholder="cooldown (sec)" value={cooldown} onChange={e => setCooldown(e.target.value)} />
+      </div>
+      <div className="mt-3 flex flex-wrap items-start gap-6">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] uppercase tracking-wider text-[#8B949E]">Resend interval</span>
+            <input className="input w-20" placeholder="0" value={resendInterval} onChange={e => setResendInterval(e.target.value)} />
+          </div>
+          <p className="mt-1 max-w-xs text-[10px] text-[#8B949E]">Re-send this alert every N consecutive breaching checks while still down. 0 = notify once only.</p>
+        </div>
+        <div>
+          <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-[#8B949E]">
+            <input type="checkbox" className="accent-[#238636]" checked={upsideDown} onChange={e => setUpsideDown(e.target.checked)} />
+            Upside down mode
+          </label>
+          <p className="mt-1 max-w-xs text-[10px] text-[#8B949E]">Invert this rule: alert when the condition is NOT met (e.g. alert if a honeypot endpoint responds at all).</p>
+        </div>
       </div>
       {channels.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">

@@ -61,12 +61,14 @@ func toRule(p PersistedRule) (Rule, bool) {
 	}
 
 	return Rule{
-		Key:       strconv.FormatInt(p.ID, 10),
-		Metric:    metric,
-		Operator:  operator,
-		Threshold: threshold,
-		Severity:  Severity(p.Severity),
-		For:       durSeconds(p.ForDurationSec),
+		Key:            strconv.FormatInt(p.ID, 10),
+		Metric:         metric,
+		Operator:       operator,
+		Threshold:      threshold,
+		Severity:       Severity(p.Severity),
+		For:            durSeconds(p.ForDurationSec),
+		ResendInterval: p.ResendInterval,
+		UpsideDown:     p.UpsideDown,
 	}, true
 }
 
