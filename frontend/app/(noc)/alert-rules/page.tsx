@@ -334,6 +334,20 @@ const CHANNEL_FIELDS: Record<string, [string, string][]> = {
     ["integration_url", "PagerTree integration URL"],
     ["urgency", "Urgency (optional)"],
   ],
+  splunk: [
+    ["rest_url", "Splunk On-Call REST endpoint URL"],
+    ["routing_key", "Routing key"],
+    ["severity", "Severity (optional, default critical)"],
+    ["auto_resolve", "Auto-resolve message type (optional; blank/0 skips resolve notifications)"],
+  ],
+  stackfield: [["webhook_url", "Stackfield webhook URL"]],
+  wecom: [["bot_key", "WeCom bot key"]],
+  feishu: [["webhook_url", "Feishu (Lark) webhook URL"]],
+  home_assistant: [
+    ["base_url", "Home Assistant base URL"],
+    ["long_lived_token", "Long-lived access token"],
+    ["notification_service", "Notification service (optional, default notify)"],
+  ],
 };
 
 function ChannelForm({ onSaved }: { onSaved: () => void }) {
@@ -361,7 +375,7 @@ function ChannelForm({ onSaved }: { onSaved: () => void }) {
       <div className="flex flex-wrap gap-3">
         <input className="input" placeholder="Channel name" value={name} onChange={e => setName(e.target.value)} />
         <select className="input" value={type} onChange={e => changeType(e.target.value)}>
-          {["webhook", "slack", "email", "pagerduty", "telegram", "whatsapp", "discord", "teams", "ntfy", "gotify", "pushover", "matrix", "google_chat", "mattermost", "opsgenie", "signal", "bark", "line", "alerta", "squadcast", "pagertree"].map(t => <option key={t} value={t}>{t}</option>)}
+          {["webhook", "slack", "email", "pagerduty", "telegram", "whatsapp", "discord", "teams", "ntfy", "gotify", "pushover", "matrix", "google_chat", "mattermost", "opsgenie", "signal", "bark", "line", "alerta", "squadcast", "pagertree", "splunk", "stackfield", "wecom", "feishu", "home_assistant"].map(t => <option key={t} value={t}>{t}</option>)}
         </select>
         {required.map(([key, placeholder]) => (
           <input
