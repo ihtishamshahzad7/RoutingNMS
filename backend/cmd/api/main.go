@@ -18,6 +18,7 @@ import (
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/apikeys"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/auth"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/customers"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/devicegroups"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/devices"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/discovery"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/dnscheck"
@@ -540,6 +541,15 @@ func main() {
 		mux.Handle("GET /api/v1/tags/assignments", authHandler.Middleware(tags.AssignmentsAPI{Repo: tagsRepo}))
 		mux.Handle("GET /api/v1/tag-assignments/{subjectType}/{subjectId}", authHandler.Middleware(tags.AssignmentsAPI{Repo: tagsRepo}))
 		mux.Handle("PUT /api/v1/tag-assignments/{subjectType}/{subjectId}", authHandler.Middleware(tags.AssignmentsAPI{Repo: tagsRepo}))
+
+		deviceGroupsRepo := devicegroups.Repository{DB: db}
+		mux.Handle("GET /api/v1/device-groups", authHandler.Middleware(devicegroups.AdminAPI{Repo: deviceGroupsRepo}))
+		mux.Handle("POST /api/v1/device-groups", authHandler.Middleware(devicegroups.AdminAPI{Repo: deviceGroupsRepo}))
+		mux.Handle("PUT /api/v1/device-groups/{id}", authHandler.Middleware(devicegroups.AdminAPI{Repo: deviceGroupsRepo}))
+		mux.Handle("DELETE /api/v1/device-groups/{id}", authHandler.Middleware(devicegroups.AdminAPI{Repo: deviceGroupsRepo}))
+		mux.Handle("GET /api/v1/device-groups/members", authHandler.Middleware(devicegroups.MembersAPI{Repo: deviceGroupsRepo}))
+		mux.Handle("PUT /api/v1/device-groups/{id}/reorder", authHandler.Middleware(devicegroups.ReorderAPI{Repo: deviceGroupsRepo}))
+		mux.Handle("PUT /api/v1/device-group-assignments/{subjectType}/{subjectId}", authHandler.Middleware(devicegroups.AssignmentAPI{Repo: deviceGroupsRepo}))
 
 		// Sprint 3 — ISP features: physical sites, wireless access points,
 		// and subscriber customer connections (migration 0018). Session-authed
