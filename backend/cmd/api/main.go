@@ -19,6 +19,7 @@ import (
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/customers"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/devices"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/discovery"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/dnscheck"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/incidents"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/maintenance"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/metricsdb"
@@ -26,6 +27,7 @@ import (
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/olt"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/ping"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/provisioning"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/push"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/sites"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/snmp"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/snmptrap"
@@ -76,6 +78,7 @@ func main() {
 
 	var oltRuntime *olt.RuntimeManager
 	var pingPoller *ping.Poller
+	var dnsPoller *dnscheck.Poller
 	var topologyEngine *topology.Discovery
 	var incidentEngine *incidents.Engine
 	var incidentStream *incidents.Stream
@@ -156,6 +159,23 @@ func main() {
 		go pingPoller.Run(ctx, pingPollInterval)
 		go prunePingResultsPeriodically(ctx, db)
 
+		// DNS resolution monitor poller (ported from Uptime Kuma's "DNS"
+		// monitor type): resolves every dns_enabled device's configured
+		// hostname/record type every DNS_POLL_INTERVAL_SECONDS (default 30s,
+		// devices themselves also carry a per-device dns_interval_seconds
+		// used purely as a UI hint today) and records dns_* metric samples.
+		dnsPoller = dnscheck.New(dnscheck.Repository{DB: db}, metricsdb.Repository{DB: db})
+		dnsPollInterval := time.Duration(envInt("DNS_POLL_INTERVAL_SECONDS", 30)) * time.Second
+		go dnsPoller.Run(ctx, dnsPollInterval)
+
+		// Push heartbeat monitor down-detection sweep (ported from Uptime
+		// Kuma's "Push" monitor type): unlike every other monitor type here,
+		// nothing is polled -- the monitored thing calls RoutingNMS on its
+		// own schedule (GET /api/v1/push/{token}); this sweep just checks
+		// whether that call arrived recently enough.
+		pushSweeper := push.Sweeper{Devices: devices.Repository{DB: db}, Metrics: metricsdb.Repository{DB: db}}
+		go pushSweeper.Run(ctx, pingPollInterval)
+
 		// Sprint 1 — scheduled LLDP topology discovery. Walks the LLDP-MIB of
 		// every SNMP-enabled device every TOPOLOGY_DISCOVER_INTERVAL_SECONDS
 		// (default 15m = 900s), persists discovered links into topology_links,
@@ -199,6 +219,8 @@ func main() {
 		mux.Handle("PUT /api/v1/devices/", authHandler.Middleware(http.HandlerFunc(deviceHandler.UpdateSNMP)))
 		mux.Handle("PUT /api/v1/devices/{id}/http-check", authHandler.Middleware(http.HandlerFunc(deviceHandler.UpdateHTTPCheck)))
 		mux.Handle("PUT /api/v1/devices/{id}/icmp-check", authHandler.Middleware(http.HandlerFunc(deviceHandler.UpdateICMPCheck)))
+		mux.Handle("PUT /api/v1/devices/{id}/dns-check", authHandler.Middleware(http.HandlerFunc(deviceHandler.UpdateDNSCheck)))
+		mux.Handle("PUT /api/v1/devices/{id}/push-check", authHandler.Middleware(http.HandlerFunc(deviceHandler.UpdatePushCheck)))
 		mux.Handle("POST /api/v1/devices/", authHandler.Middleware(http.HandlerFunc(discoveryHandler.Discover)))
 		mux.Handle("GET /api/v1/devices/", authHandler.Middleware(http.HandlerFunc(discoveryHandler.Interfaces)))
 
@@ -334,6 +356,32 @@ func main() {
 			http.NotFound(w, r)
 		})))
 
+		// DNS resolution monitor live/check, powering the "DNS Check" section
+		// on the device detail page, mirroring the ping live/probe routes
+		// above.
+		dnsAPI := dnscheck.API{Devices: devicesRepo, Poller: dnsPoller}
+		mux.Handle("GET /api/v1/dns/", authHandler.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/live") {
+				dnsAPI.Live(w, r)
+				return
+			}
+			http.NotFound(w, r)
+		})))
+		mux.Handle("POST /api/v1/dns/", authHandler.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/check") {
+				dnsAPI.Check(w, r)
+				return
+			}
+			http.NotFound(w, r)
+		})))
+
+		// Push heartbeat monitor receive endpoint -- ported from Uptime
+		// Kuma's "Push" monitor type. Deliberately registered outside
+		// authHandler.Middleware: the caller is an external cron job/service
+		// with no session, authenticated only by the per-device token in the
+		// URL (like the RouterOS provisioning fetch route below).
+		mux.Handle("GET /api/v1/push/{token}", push.API{Devices: devicesRepo})
+
 		// On-demand traceroute -- an "advanced" pinging capability Kuma's
 		// ping monitor never had: hop-by-hop path trace to a device, for
 		// diagnosing where a path breaks rather than just that it did.
@@ -447,6 +495,11 @@ func main() {
 		mux.HandleFunc("PUT /api/v1/devices/", unavailable)
 		mux.HandleFunc("PUT /api/v1/devices/{id}/http-check", unavailable)
 		mux.HandleFunc("PUT /api/v1/devices/{id}/icmp-check", unavailable)
+		mux.HandleFunc("PUT /api/v1/devices/{id}/dns-check", unavailable)
+		mux.HandleFunc("PUT /api/v1/devices/{id}/push-check", unavailable)
+		mux.HandleFunc("GET /api/v1/dns/", unavailable)
+		mux.HandleFunc("POST /api/v1/dns/", unavailable)
+		mux.HandleFunc("GET /api/v1/push/{token}", unavailable)
 		mux.HandleFunc("POST /api/v1/devices/", unavailable)
 		mux.HandleFunc("GET /api/v1/devices/", unavailable)
 		mux.HandleFunc("GET /api/v1/olt/runtime", unavailable)

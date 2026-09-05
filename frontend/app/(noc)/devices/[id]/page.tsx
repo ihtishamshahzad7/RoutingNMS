@@ -6,7 +6,8 @@ import { FormEvent, useEffect, useState } from "react";
 import { ApiError, apiFetch } from "../../../../lib/api";
 import { MetricChart } from "../../../../components/metric-chart";
 
-type Device={id:string;name:string;address:string;deviceType:string;vendor?:string;serialNumber?:string;enabled:boolean;snmpEnabled:boolean;snmpVersion:string;snmpPort:number;snmpConfigured:boolean;provisioningTemplateId?:number|null;lastProvisionedAt?:string;httpCheckEnabled:boolean;httpUrl?:string;httpExpectedStatus:number;httpKeyword?:string;httpTimeoutMs:number;icmpEnabled:boolean;icmpIntervalSeconds:number;icmpPacketSize:number;icmpCount:number;icmpRetries:number};
+type Device={id:string;name:string;address:string;deviceType:string;vendor?:string;serialNumber?:string;enabled:boolean;snmpEnabled:boolean;snmpVersion:string;snmpPort:number;snmpConfigured:boolean;provisioningTemplateId?:number|null;lastProvisionedAt?:string;httpCheckEnabled:boolean;httpUrl?:string;httpExpectedStatus:number;httpKeyword?:string;httpTimeoutMs:number;icmpEnabled:boolean;icmpIntervalSeconds:number;icmpPacketSize:number;icmpCount:number;icmpRetries:number;dnsEnabled:boolean;dnsHostname?:string;dnsRecordType:string;dnsResolverServer?:string;dnsExpectedAnswer?:string;dnsIntervalSeconds:number;pushEnabled:boolean;pushToken?:string;pushIntervalSeconds:number;pushGracePeriodSeconds:number;pushLastSeenAt?:string;pushLastStatus?:string;pushLastMessage?:string};
+type DNSLive={live:{resolved:boolean;answers?:string[];latencyMs:number;expectedMatch?:boolean|null;error?:string}};
 type ProvTemplate={id:number;name:string;scriptBody:string};
 type Preview={renderedScript:string;password:string;fetchCommand:string};
 type Interface={id:number;deviceId:string;ifIndex:number;name:string;description:string;adminUp:boolean;operUp:boolean;inOctets:number;outOctets:number;inErrors:number;outErrors:number;lastDiscoveredAt?:string};
@@ -42,11 +43,36 @@ export default function DeviceDetailsPage(){
  async function saveICMPCheck(e:FormEvent<HTMLFormElement>){e.preventDefault();if(!device)return;setIcmpSaving(true);setIcmpMessage("");const data=new FormData(e.currentTarget);try{const updated=await apiFetch<Device>(`/devices/${device.id}/icmp-check`,{method:"PUT",body:JSON.stringify({enabled:data.get("enabled")==="on",intervalSeconds:Number(data.get("intervalSeconds")||30),packetSize:Number(data.get("packetSize")||56),count:Number(data.get("count")||3),retries:Number(data.get("retries")||1)})});setDevice(updated);setIcmpMessage("ICMP ping configuration saved.")}catch(e){setIcmpMessage(e instanceof ApiError?e.message:"Failed to save ICMP ping configuration.")}finally{setIcmpSaving(false)}}
  const [httpSaving,setHttpSaving]=useState(false),[httpMessage,setHttpMessage]=useState("");
  async function saveHTTPCheck(e:FormEvent<HTMLFormElement>){e.preventDefault();if(!device)return;setHttpSaving(true);setHttpMessage("");const data=new FormData(e.currentTarget);try{const updated=await apiFetch<Device>(`/devices/${device.id}/http-check`,{method:"PUT",body:JSON.stringify({enabled:data.get("enabled")==="on",url:data.get("url"),expectedStatus:Number(data.get("expectedStatus")||200),keyword:data.get("keyword"),timeoutMs:Number(data.get("timeoutMs")||5000)})});setDevice(updated);setHttpMessage("HTTP check configuration saved.")}catch(e){setHttpMessage(e instanceof ApiError?e.message:"Failed to save HTTP check configuration.")}finally{setHttpSaving(false)}}
+ const [dnsSaving,setDnsSaving]=useState(false),[dnsMessage,setDnsMessage]=useState(""),[dnsLive,setDnsLive]=useState<DNSLive|null>(null),[dnsChecking,setDnsChecking]=useState(false);
+ async function loadDNSLive(){try{setDnsLive(await apiFetch<DNSLive>(`/dns/${id}/live`))}catch{ /* best-effort */ }}
+ useEffect(()=>{loadDNSLive();const t=setInterval(loadDNSLive,15000);return()=>clearInterval(t)},[id]);
+ async function checkDNSNow(){setDnsChecking(true);try{await apiFetch(`/dns/${id}/check`,{method:"POST"});await loadDNSLive()}catch{ /* best-effort */ }finally{setDnsChecking(false)}}
+ async function saveDNSCheck(e:FormEvent<HTMLFormElement>){e.preventDefault();if(!device)return;setDnsSaving(true);setDnsMessage("");const data=new FormData(e.currentTarget);try{const updated=await apiFetch<Device>(`/devices/${device.id}/dns-check`,{method:"PUT",body:JSON.stringify({enabled:data.get("enabled")==="on",hostname:data.get("hostname"),recordType:data.get("recordType"),resolverServer:data.get("resolverServer"),expectedAnswer:data.get("expectedAnswer"),intervalSeconds:Number(data.get("intervalSeconds")||60)})});setDevice(updated);setDnsMessage("DNS check configuration saved.")}catch(e){setDnsMessage(e instanceof ApiError?e.message:"Failed to save DNS check configuration.")}finally{setDnsSaving(false)}}
+ const [pushSaving,setPushSaving]=useState(false),[pushMessage,setPushMessage]=useState(""),[copied,setCopied]=useState(false);
+ async function savePushCheck(e:FormEvent<HTMLFormElement>){e.preventDefault();if(!device)return;setPushSaving(true);setPushMessage("");const data=new FormData(e.currentTarget);try{const updated=await apiFetch<Device>(`/devices/${device.id}/push-check`,{method:"PUT",body:JSON.stringify({enabled:data.get("enabled")==="on",intervalSeconds:Number(data.get("intervalSeconds")||60),gracePeriodSeconds:Number(data.get("gracePeriodSeconds")||30)})});setDevice(updated);setPushMessage("Push monitor configuration saved.")}catch(e){setPushMessage(e instanceof ApiError?e.message:"Failed to save push monitor configuration.")}finally{setPushSaving(false)}}
+ function pushURL(token?:string){if(typeof window==="undefined"||!token)return"";return `${window.location.origin}/api/v1/push/${token}?status=up&msg=OK`}
+ async function copyPushURL(){if(!device?.pushToken)return;try{await navigator.clipboard.writeText(pushURL(device.pushToken));setCopied(true);setTimeout(()=>setCopied(false),2000)}catch{ /* clipboard unavailable */ }}
  async function discover(){setDiscovering(true);setMessage("");try{const r=await apiFetch<{interfaceCount:number;systemName?:string}>(`/devices/${id}/discover`,{method:"POST"});setMessage(`Discovery completed: ${r.interfaceCount} interfaces saved${r.systemName?` · ${r.systemName}`:""}.`);await load()}catch(e){setMessage(e instanceof ApiError?e.message:e instanceof Error?e.message:"SNMP discovery failed")}finally{setDiscovering(false)}}
  if(loading)return <main className="mx-auto max-w-7xl px-6 py-8 text-slate-400">Loading device…</main>;
  if(!device)return <main className="mx-auto max-w-7xl px-6 py-8"><div className={card}><h1 className="text-xl font-semibold">Device unavailable</h1><p className="mt-2 text-sm text-slate-400">{message||"The requested device does not exist."}</p><Link href="/devices" className="mt-4 inline-block text-cyan-400">← Back to devices</Link></div></main>;
  const up=interfaces.filter(x=>x.operUp).length;
  return <main className="mx-auto max-w-7xl px-6 py-8"><div className="mb-6 flex flex-wrap items-start justify-between gap-4"><div><Link href="/devices" className="text-xs text-slate-500 hover:text-cyan-400">← Network Devices</Link><div className="mt-3 text-xs font-semibold tracking-[.2em] text-cyan-400">DEVICE MONITORING</div><h1 className="mt-1 text-3xl font-bold">{device.name}</h1><p className="mt-1 text-sm text-slate-400">{device.address} · {device.vendor||device.deviceType}</p></div><button onClick={discover} disabled={discovering||!device.snmpEnabled} className="rounded-xl bg-cyan-600 px-5 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">{discovering?"Discovering…":"Run SNMP Discovery"}</button></div>{message&&<div className="mb-5 rounded-xl border border-cyan-900 bg-cyan-950/30 px-4 py-3 text-sm text-cyan-200">{message}</div>}
+ <section className={`mb-6 ${card}`}>
+  <h2 className="mb-3 font-semibold">Monitor types on this device</h2>
+  <div className="flex flex-wrap gap-2 text-xs">
+   {[
+    {label:"SNMP",on:device.snmpEnabled},
+    {label:"ICMP Ping",on:device.icmpEnabled},
+    {label:"HTTP(S) Check",on:device.httpCheckEnabled},
+    {label:"DNS Check",on:device.dnsEnabled},
+    {label:"Push Heartbeat",on:device.pushEnabled},
+   ].map(m=>(
+    <span key={m.label} className={`rounded-full border px-3 py-1 font-medium ${m.on?"border-emerald-800 bg-emerald-950/40 text-emerald-300":"border-slate-800 bg-slate-950 text-slate-600"}`}>
+     {m.on?"● ":"○ "}{m.label}
+    </span>
+   ))}
+  </div>
+ </section>
  <section className={`mb-6 ${card}`}>
   <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">Tags</h2>{tagSaving&&<span className="text-xs text-slate-500">Saving…</span>}</div>
   {tagMessage&&<div className="mt-2 text-xs text-red-400">{tagMessage}</div>}
@@ -89,6 +115,52 @@ export default function DeviceDetailsPage(){
    </div>}
   {pingState.live&&pingState.live.live?.error&&<div className="mt-3 text-xs text-amber-400">{pingState.live.live.error}</div>}
   <div className="mt-4"><PingSparkline results={pingState.live?.history??[]} /></div>
+ </section>
+ <section className={`mb-6 ${card}`}>
+  <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">DNS Check</h2><p className="mt-1 text-xs text-slate-500">Resolve a hostname against a record type (and, optionally, a specific resolver server), alerting on failure or an unexpected answer. Ported from Uptime Kuma's DNS monitor.</p></div><button onClick={checkDNSNow} disabled={dnsChecking} className="rounded-lg border border-cyan-700 bg-cyan-950/40 px-3 py-2 text-xs text-cyan-300 hover:bg-cyan-900/40 disabled:opacity-50">{dnsChecking?"Checking…":"Check now"}</button></div>
+  <form onSubmit={saveDNSCheck} className="mt-4 grid gap-4 rounded-lg border border-slate-800 bg-slate-950 p-4 sm:grid-cols-2">
+   <label className="sm:col-span-2 flex items-center gap-3 text-sm"><input name="enabled" type="checkbox" defaultChecked={device.dnsEnabled} className="h-4 w-4"/><span><b>Enable DNS check</b><span className="ml-2 text-xs text-slate-500">Feeds alerting on resolution failure/mismatch</span></span></label>
+   <label className="text-xs text-slate-400">Hostname<input name="hostname" defaultValue={device.dnsHostname} placeholder="example.com" className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-cyan-500"/></label>
+   <label className="text-xs text-slate-400">Record type
+    <select name="recordType" defaultValue={device.dnsRecordType||"A"} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-cyan-500">
+     {["A","AAAA","CNAME","MX","TXT","NS","SOA"].map(rt=><option key={rt} value={rt}>{rt}</option>)}
+    </select>
+   </label>
+   <label className="text-xs text-slate-400">Resolver server (optional)<input name="resolverServer" defaultValue={device.dnsResolverServer} placeholder="8.8.8.8 (blank = system default)" className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-cyan-500"/></label>
+   <label className="text-xs text-slate-400">Interval (s)<input name="intervalSeconds" type="number" min={5} defaultValue={device.dnsIntervalSeconds||60} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-cyan-500"/></label>
+   <label className="sm:col-span-2 text-xs text-slate-400">Expected answer (optional)<input name="expectedAnswer" defaultValue={device.dnsExpectedAnswer} placeholder="e.g. an expected IP/CNAME/text fragment" className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-cyan-500"/></label>
+   <div className="sm:col-span-2"><button disabled={dnsSaving} className="rounded-lg bg-cyan-600 px-4 py-2 text-xs font-semibold hover:bg-cyan-500 disabled:opacity-50">{dnsSaving?"Saving…":"Save DNS check"}</button>{dnsMessage&&<span className="ml-3 text-xs text-slate-400">{dnsMessage}</span>}</div>
+  </form>
+  {device.dnsEnabled&&<div className="mt-4">
+   {!dnsLive?.live?<div className="text-sm text-slate-500">No DNS check data yet — waiting for the poller or a manual check.</div>
+    :<div className="grid gap-4 sm:grid-cols-3">
+     <div className="rounded-xl border border-slate-800 bg-slate-950 p-4"><div className="text-xs uppercase text-slate-500">Status</div><div className={`mt-2 text-xl font-bold ${dnsLive.live.resolved?"text-emerald-400":"text-red-400"}`}>{dnsLive.live.resolved?"RESOLVED":"FAILING"}</div></div>
+     <div className="rounded-xl border border-slate-800 bg-slate-950 p-4"><div className="text-xs uppercase text-slate-500">Latency</div><div className="mt-2 text-xl font-bold">{dnsLive.live.latencyMs!=null?`${dnsLive.live.latencyMs.toFixed(0)} ms`:"—"}</div></div>
+     <div className="rounded-xl border border-slate-800 bg-slate-950 p-4"><div className="text-xs uppercase text-slate-500">Answers</div><div className="mt-2 text-sm font-medium text-slate-300">{dnsLive.live.answers?.join(", ")||"—"}</div></div>
+    </div>}
+   {dnsLive?.live?.error&&<div className="mt-3 text-xs text-amber-400">{dnsLive.live.error}</div>}
+  </div>}
+ </section>
+ <section className={`mb-6 ${card}`}>
+  <div className="mb-4"><h2 className="font-semibold">Push Monitor (heartbeat)</h2><p className="mt-1 text-xs text-slate-500">The monitored thing calls RoutingNMS on its own schedule instead of being polled — point a cron job at the URL below. Down if no push arrives within interval + grace period. Ported from Uptime Kuma's Push monitor.</p></div>
+  <form onSubmit={savePushCheck} className="grid gap-4 rounded-lg border border-slate-800 bg-slate-950 p-4 sm:grid-cols-2">
+   <label className="sm:col-span-2 flex items-center gap-3 text-sm"><input name="enabled" type="checkbox" defaultChecked={device.pushEnabled} className="h-4 w-4"/><span><b>Enable push monitor</b><span className="ml-2 text-xs text-slate-500">Generates a push URL the first time you enable it</span></span></label>
+   <label className="text-xs text-slate-400">Expected interval (s)<input name="intervalSeconds" type="number" min={10} defaultValue={device.pushIntervalSeconds||60} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-cyan-500"/></label>
+   <label className="text-xs text-slate-400">Grace period (s)<input name="gracePeriodSeconds" type="number" min={0} defaultValue={device.pushGracePeriodSeconds??30} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-cyan-500"/></label>
+   <div className="sm:col-span-2"><button disabled={pushSaving} className="rounded-lg bg-cyan-600 px-4 py-2 text-xs font-semibold hover:bg-cyan-500 disabled:opacity-50">{pushSaving?"Saving…":"Save push monitor"}</button>{pushMessage&&<span className="ml-3 text-xs text-slate-400">{pushMessage}</span>}</div>
+  </form>
+  {device.pushToken&&<div className="mt-4">
+   <div className="text-xs uppercase text-slate-500">Push URL</div>
+   <div className="mt-1 flex flex-wrap items-center gap-2">
+    <code className="flex-1 overflow-x-auto rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-emerald-300">{pushURL(device.pushToken)}</code>
+    <button type="button" onClick={copyPushURL} className="rounded-lg border border-cyan-700 bg-cyan-950/40 px-3 py-2 text-xs text-cyan-300 hover:bg-cyan-900/40">{copied?"Copied!":"Copy"}</button>
+   </div>
+   <div className="mt-3 grid gap-4 sm:grid-cols-3">
+    <div className="rounded-xl border border-slate-800 bg-slate-950 p-4"><div className="text-xs uppercase text-slate-500">Last push</div><div className="mt-2 text-sm font-bold">{device.pushLastSeenAt?new Date(device.pushLastSeenAt).toLocaleString():"Never"}</div></div>
+    <div className="rounded-xl border border-slate-800 bg-slate-950 p-4"><div className="text-xs uppercase text-slate-500">Last status</div><div className="mt-2 text-sm font-bold">{device.pushLastStatus||"—"}</div></div>
+    <div className="rounded-xl border border-slate-800 bg-slate-950 p-4"><div className="text-xs uppercase text-slate-500">Last message</div><div className="mt-2 text-sm font-medium text-slate-300">{device.pushLastMessage||"—"}</div></div>
+   </div>
+  </div>}
  </section>
  <section id="traceroute" className={`mb-6 ${card}`}>
   <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">Traceroute</h2><p className="mt-1 text-xs text-slate-500">On-demand hop-by-hop path trace to this device — an advanced diagnostic the previous monitoring setup never offered.</p></div><button onClick={runTraceroute} disabled={tracing} className="rounded-lg border border-cyan-700 bg-cyan-950/40 px-3 py-2 text-xs text-cyan-300 hover:bg-cyan-900/40 disabled:opacity-50">{tracing?"Tracing…":"Run traceroute"}</button></div>

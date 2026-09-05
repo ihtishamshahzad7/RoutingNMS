@@ -35,6 +35,9 @@ type Device = {
   icmpEnabled: boolean;
   httpCheckEnabled: boolean;
   httpUrl?: string;
+  dnsEnabled: boolean;
+  dnsHostname?: string;
+  pushEnabled: boolean;
 };
 
 type PingResult = { reachable: boolean; rttMs: number; lossPct: number; probedAt: string; error?: string };
@@ -43,6 +46,59 @@ type MetricPoint = { timestamp: string; value: number };
 type MetricSeries = { metric: string; points: MetricPoint[] };
 
 type RowState = "loading" | "up" | "down" | "unmonitored";
+type DNSLive = { live: { resolved: boolean; latencyMs: number; error?: string } };
+
+function DnsCell({ device }: { device: Device }) {
+  const [data, setData] = useState<DNSLive | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    if (!device.dnsEnabled) return;
+    let active = true;
+    apiFetch<DNSLive>(`/dns/${device.id}/live`)
+      .then((d) => { if (active) setData(d); })
+      .catch(() => { if (active) setError(true); });
+    return () => { active = false; };
+  }, [device.id, device.dnsEnabled]);
+
+  if (!device.dnsEnabled) return <span className="text-[10px] text-[#484F58]">—</span>;
+  if (error) return <span className="text-[10px] text-[#F78166]">unavailable</span>;
+  if (!data?.live) return <span className="text-[10px] text-[#8B949E]">…</span>;
+
+  const up = data.live.resolved;
+  return (
+    <div className="w-20">
+      <StatusPill status={up ? "up" : "down"} label={up ? "Resolves" : "Failing"} />
+      <div className="mt-1 font-mono text-[10px] text-[#8B949E]">{device.dnsHostname}</div>
+    </div>
+  );
+}
+
+function PushCell({ device }: { device: Device }) {
+  const [series, setSeries] = useState<MetricSeries[] | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    if (!device.pushEnabled) return;
+    let active = true;
+    apiFetch<MetricSeries[]>(
+      `/metrics?subjectType=device&subjectId=${encodeURIComponent(device.id)}&metric=push_up&since=6h`
+    )
+      .then((s) => { if (active) setSeries(s); })
+      .catch(() => { if (active) setError(true); });
+    return () => { active = false; };
+  }, [device.id, device.pushEnabled]);
+
+  if (!device.pushEnabled) return <span className="text-[10px] text-[#484F58]">—</span>;
+  if (error) return <span className="text-[10px] text-[#F78166]">unavailable</span>;
+  if (!series) return <span className="text-[10px] text-[#8B949E]">…</span>;
+
+  const upSeries = series.find((s) => s.metric === "push_up");
+  const lastUp = upSeries?.points[upSeries.points.length - 1]?.value;
+  const known = lastUp !== undefined;
+  const up = lastUp === 1;
+  return <StatusPill status={known ? (up ? "up" : "down") : "unknown"} label={known ? (up ? "Up" : "No heartbeat") : "No data"} />;
+}
 
 function PingCell({ device }: { device: Device }) {
   const [data, setData] = useState<PingLive | null>(null);
@@ -157,6 +213,12 @@ function DeviceRow({ device }: { device: Device }) {
       <td className="py-3 pr-3 align-top">
         <HttpCell device={device} />
       </td>
+      <td className="py-3 pr-3 align-top">
+        <DnsCell device={device} />
+      </td>
+      <td className="py-3 pr-3 align-top">
+        <PushCell device={device} />
+      </td>
       <td className="py-3 pr-4 align-top">
         <Link
           href={`/devices/${device.id}#traceroute`}
@@ -269,24 +331,26 @@ export default function ReachabilityPage() {
       >
         <FilterHint filter={filter} onClear={() => setFilter("all")} />
         <div className="overflow-x-auto">
-          <table className="tbl w-full min-w-[820px] text-left text-xs">
+          <table className="tbl w-full min-w-[1080px] text-left text-xs">
             <thead>
               <tr>
                 <th>Device</th>
                 <th>ICMP / Ping</th>
                 <th>HTTP check</th>
+                <th>DNS check</th>
+                <th>Push heartbeat</th>
                 <th>Trace</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={4} className="py-10 text-center text-[#8B949E]">Loading reachability board…</td></tr>
+                <tr><td colSpan={6} className="py-10 text-center text-[#8B949E]">Loading reachability board…</td></tr>
               ) : filtered.length ? (
                 filtered.map((d) => (
                   <FilteredRow key={d.id} device={d} filter={filter} />
                 ))
               ) : (
-                <tr><td colSpan={4} className="py-10 text-center text-[#8B949E]">No devices match.</td></tr>
+                <tr><td colSpan={6} className="py-10 text-center text-[#8B949E]">No devices match.</td></tr>
               )}
             </tbody>
           </table>

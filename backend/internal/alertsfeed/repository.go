@@ -25,6 +25,8 @@ const (
 	SourceTrap   Source = "trap"   // a recent SNMP trap matched to warning/critical by a trap rule
 	SourceHTTP   Source = "http"   // a device's optional HTTP(S)+keyword monitor (ported from Uptime Kuma)
 	SourceICMP   Source = "icmp"   // a device's dedicated ICMP ping poller (internal/ping), independent of the TCP/SNMP "up" check
+	SourceDNS    Source = "dns"    // a device's optional DNS resolution monitor (ported from Uptime Kuma's "DNS" monitor type)
+	SourcePush   Source = "push"   // a device's optional "push" heartbeat monitor -- no push arrived within interval+grace
 )
 
 // Active is one currently-active thing worth alerting an operator about.
@@ -141,6 +143,30 @@ func (r Repository) List(ctx context.Context) ([]Active, error) {
 		return nil, err
 	}
 	out = append(out, icmpRecovered...)
+
+	dnsAlerts, err := r.downDNS(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, dnsAlerts...)
+
+	dnsRecovered, err := r.recoveredDNS(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, dnsRecovered...)
+
+	pushAlerts, err := r.downPush(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, pushAlerts...)
+
+	pushRecovered, err := r.recoveredPush(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, pushRecovered...)
 
 	return r.suppressMaintenance(ctx, out)
 }
@@ -540,6 +566,180 @@ func (r Repository) recoveredICMP(ctx context.Context) ([]Active, error) {
 			Severity:    "info",
 			Hostname:    name,
 			Message:     "ICMP ping recovered (" + address + ")",
+			Since:       since,
+			Kind:        "up",
+			subjectType: "device",
+			subjectID:   id,
+		})
+	}
+	return out, rows.Err()
+}
+
+// downDNS finds devices whose latest "dns_up" metric sample (recorded by
+// the DNS resolution poller, internal/dnscheck) reported down.
+func (r Repository) downDNS(ctx context.Context) ([]Active, error) {
+	rows, err := r.DB.Query(ctx, `
+		WITH latest AS (
+			SELECT DISTINCT ON (subject_id) subject_id, value, recorded_at
+			FROM metric_samples
+			WHERE subject_type = 'device' AND metric_name = 'dns_up'
+			ORDER BY subject_id, recorded_at DESC
+		)
+		SELECT d.id, d.name, d.dns_hostname, l.recorded_at
+		FROM latest l
+		JOIN devices d ON d.id::text = l.subject_id
+		WHERE l.value = 0 AND d.enabled = true AND d.dns_enabled = true
+		ORDER BY l.recorded_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Active{}
+	for rows.Next() {
+		var id, name, hostname string
+		var since time.Time
+		if err := rows.Scan(&id, &name, &hostname, &since); err != nil {
+			return nil, err
+		}
+		out = append(out, Active{
+			ID:          "dns-" + id,
+			Source:      SourceDNS,
+			Severity:    "warning",
+			Hostname:    name,
+			Message:     "DNS resolution failing (" + hostname + ")",
+			Since:       since,
+			Kind:        "down",
+			subjectType: "device",
+			subjectID:   id,
+		})
+	}
+	return out, rows.Err()
+}
+
+// recoveredDNS is downDNS's recovery counterpart, mirroring
+// recoveredHTTP/recoveredICMP for the dns_up metric.
+func (r Repository) recoveredDNS(ctx context.Context) ([]Active, error) {
+	rows, err := r.DB.Query(ctx, `
+		WITH ranked AS (
+			SELECT subject_id, value, recorded_at,
+				LAG(value) OVER (PARTITION BY subject_id ORDER BY recorded_at) AS prev_value
+			FROM metric_samples
+			WHERE subject_type = 'device' AND metric_name = 'dns_up'
+		),
+		latest AS (
+			SELECT DISTINCT ON (subject_id) subject_id, value, prev_value, recorded_at
+			FROM ranked
+			ORDER BY subject_id, recorded_at DESC
+		)
+		SELECT d.id, d.name, d.dns_hostname, l.recorded_at
+		FROM latest l
+		JOIN devices d ON d.id::text = l.subject_id
+		WHERE l.value = 1 AND l.prev_value = 0 AND l.recorded_at >= $1 AND d.enabled = true AND d.dns_enabled = true
+		ORDER BY l.recorded_at DESC`, time.Now().Add(-RecoveryLookback))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Active{}
+	for rows.Next() {
+		var id, name, hostname string
+		var since time.Time
+		if err := rows.Scan(&id, &name, &hostname, &since); err != nil {
+			return nil, err
+		}
+		out = append(out, Active{
+			ID:          "dns-recovered-" + id,
+			Source:      SourceDNS,
+			Severity:    "info",
+			Hostname:    name,
+			Message:     "DNS resolution recovered (" + hostname + ")",
+			Since:       since,
+			Kind:        "up",
+			subjectType: "device",
+			subjectID:   id,
+		})
+	}
+	return out, rows.Err()
+}
+
+// downPush finds devices whose latest "push_up" metric sample (recorded by
+// the push heartbeat sweeper, internal/push) reported down -- no push
+// arrived within push_interval_seconds + push_grace_period_seconds.
+func (r Repository) downPush(ctx context.Context) ([]Active, error) {
+	rows, err := r.DB.Query(ctx, `
+		WITH latest AS (
+			SELECT DISTINCT ON (subject_id) subject_id, value, recorded_at
+			FROM metric_samples
+			WHERE subject_type = 'device' AND metric_name = 'push_up'
+			ORDER BY subject_id, recorded_at DESC
+		)
+		SELECT d.id, d.name, l.recorded_at
+		FROM latest l
+		JOIN devices d ON d.id::text = l.subject_id
+		WHERE l.value = 0 AND d.enabled = true AND d.push_enabled = true
+		ORDER BY l.recorded_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Active{}
+	for rows.Next() {
+		var id, name string
+		var since time.Time
+		if err := rows.Scan(&id, &name, &since); err != nil {
+			return nil, err
+		}
+		out = append(out, Active{
+			ID:          "push-" + id,
+			Source:      SourcePush,
+			Severity:    "critical",
+			Hostname:    name,
+			Message:     "no heartbeat push received in time",
+			Since:       since,
+			Kind:        "down",
+			subjectType: "device",
+			subjectID:   id,
+		})
+	}
+	return out, rows.Err()
+}
+
+// recoveredPush is downPush's recovery counterpart.
+func (r Repository) recoveredPush(ctx context.Context) ([]Active, error) {
+	rows, err := r.DB.Query(ctx, `
+		WITH ranked AS (
+			SELECT subject_id, value, recorded_at,
+				LAG(value) OVER (PARTITION BY subject_id ORDER BY recorded_at) AS prev_value
+			FROM metric_samples
+			WHERE subject_type = 'device' AND metric_name = 'push_up'
+		),
+		latest AS (
+			SELECT DISTINCT ON (subject_id) subject_id, value, prev_value, recorded_at
+			FROM ranked
+			ORDER BY subject_id, recorded_at DESC
+		)
+		SELECT d.id, d.name, l.recorded_at
+		FROM latest l
+		JOIN devices d ON d.id::text = l.subject_id
+		WHERE l.value = 1 AND l.prev_value = 0 AND l.recorded_at >= $1 AND d.enabled = true AND d.push_enabled = true
+		ORDER BY l.recorded_at DESC`, time.Now().Add(-RecoveryLookback))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Active{}
+	for rows.Next() {
+		var id, name string
+		var since time.Time
+		if err := rows.Scan(&id, &name, &since); err != nil {
+			return nil, err
+		}
+		out = append(out, Active{
+			ID:          "push-recovered-" + id,
+			Source:      SourcePush,
+			Severity:    "info",
+			Hostname:    name,
+			Message:     "heartbeat push recovered",
 			Since:       since,
 			Kind:        "up",
 			subjectType: "device",

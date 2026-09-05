@@ -132,6 +132,80 @@ func (h Handler) UpdateHTTPCheck(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(d)
 }
 
+// UpdateDNSCheck backs PUT /api/v1/devices/{id}/dns-check -- configures the
+// optional DNS resolution monitor, ported from Uptime Kuma's "DNS" monitor
+// type.
+func (h Handler) UpdateDNSCheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "device ID is required", 400)
+		return
+	}
+	var req DNSCheckRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON", 400)
+		return
+	}
+	if req.Enabled && strings.TrimSpace(req.Hostname) == "" {
+		http.Error(w, "hostname is required when the DNS check is enabled", 400)
+		return
+	}
+	switch strings.ToUpper(strings.TrimSpace(req.RecordType)) {
+	case "", "A", "AAAA", "CNAME", "MX", "TXT", "NS", "SOA":
+	default:
+		http.Error(w, "recordType must be one of A, AAAA, CNAME, MX, TXT, NS, SOA", 400)
+		return
+	}
+	req.RecordType = strings.ToUpper(strings.TrimSpace(req.RecordType))
+	if err := h.Repo.UpdateDNSCheck(r.Context(), id, req); err != nil {
+		http.Error(w, "failed to save DNS check configuration: "+err.Error(), 500)
+		return
+	}
+	d, err := h.Repo.GetByID(r.Context(), id)
+	if err != nil {
+		http.Error(w, "device not found", 404)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(d)
+}
+
+// UpdatePushCheck backs PUT /api/v1/devices/{id}/push-check -- configures
+// the optional "push" heartbeat monitor, ported from Uptime Kuma's "Push"
+// monitor type. Enabling it for the first time generates a push token, so
+// the response's pushToken can be shown as a ready-to-copy push URL.
+func (h Handler) UpdatePushCheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "device ID is required", 400)
+		return
+	}
+	var req PushCheckRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON", 400)
+		return
+	}
+	if _, err := h.Repo.UpdatePushCheck(r.Context(), id, req); err != nil {
+		http.Error(w, "failed to save push monitor configuration: "+err.Error(), 500)
+		return
+	}
+	d, err := h.Repo.GetByID(r.Context(), id)
+	if err != nil {
+		http.Error(w, "device not found", 404)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(d)
+}
+
 // UpdateICMPCheck backs PUT /api/v1/devices/{id}/icmp-check -- configures
 // the dedicated ICMP ping poller (internal/ping): interval, packet size,
 // probe count, and "retries before down" (mirroring Uptime Kuma's ping
