@@ -25,7 +25,7 @@ type ActiveAlert = {
 };
 
 const POLL_MS = 15000;
-const SOURCE_LABEL: Record<AlertSource, string> = { olt: "OLT alert", device: "Device", trap: "SNMP trap", http: "HTTP check", icmp: "ICMP ping", dns: "DNS check", push: "Push heartbeat" };
+const SOURCE_LABEL: Record<AlertSource, string> = { olt: "OLT alert", device: "Device", trap: "SNMP trap", http: "HTTP check", icmp: "ICMP ping", dns: "DNS check", push: "Push heartbeat", ssh: "SSH check", telnet: "Telnet check", topology_link: "Topology link" };
 
 function speechText(a: ActiveAlert): string {
   if (a.kind === "up") {
@@ -35,6 +35,9 @@ function speechText(a: ActiveAlert): string {
     if (a.source === "icmp") return `ICMP ping to ${a.hostname} recovered.`;
     if (a.source === "dns") return `DNS resolution for ${a.hostname} recovered.`;
     if (a.source === "push") return `Heartbeat push from ${a.hostname} recovered.`;
+    if (a.source === "ssh") return `SSH on ${a.hostname} recovered.`;
+    if (a.source === "telnet") return `Telnet on ${a.hostname} recovered.`;
+    if (a.source === "topology_link") return `${a.message}.`;
     return `Recovered: ${a.hostname}. ${a.message}.`;
   }
   if (a.source === "device") return `${a.severity}. ${a.hostname} is down.`;
@@ -43,6 +46,9 @@ function speechText(a: ActiveAlert): string {
   if (a.source === "icmp") return `${a.severity}. ICMP ping failing on ${a.hostname}.`;
   if (a.source === "dns") return `${a.severity}. DNS resolution failing on ${a.hostname}.`;
   if (a.source === "push") return `${a.severity}. No heartbeat push received from ${a.hostname}.`;
+  if (a.source === "ssh") return `${a.severity}. SSH unreachable on ${a.hostname}.`;
+  if (a.source === "telnet") return `${a.severity}. Telnet unreachable on ${a.hostname}.`;
+  if (a.source === "topology_link") return `${a.severity}. ${a.message}.`;
   return `${a.severity} SNMP trap from ${a.hostname}. ${a.message}.`;
 }
 

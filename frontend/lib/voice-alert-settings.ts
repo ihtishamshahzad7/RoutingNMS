@@ -4,7 +4,7 @@
 // reloads, no backend round trip needed for a purely per-operator
 // preference like "how loud" or "how often to repeat").
 
-export type AlertSource = "olt" | "device" | "trap" | "http" | "icmp" | "dns" | "push";
+export type AlertSource = "olt" | "device" | "trap" | "http" | "icmp" | "dns" | "push" | "ssh" | "telnet" | "topology_link";
 export type AlertSeverity = "critical" | "warning" | "info";
 
 export type VoiceAlertSettings = {
@@ -21,7 +21,7 @@ export const DEFAULT_VOICE_ALERT_SETTINGS: VoiceAlertSettings = {
   enabled: true,
   volume: 1,
   repeatIntervalSeconds: 120,
-  sources: { olt: true, device: true, trap: true, http: true, icmp: true, dns: true, push: true },
+  sources: { olt: true, device: true, trap: true, http: true, icmp: true, dns: true, push: true, ssh: true, telnet: true, topology_link: true },
   severities: { critical: true, warning: true, info: false },
   mutedHostnames: [],
   announceRecoveries: true,

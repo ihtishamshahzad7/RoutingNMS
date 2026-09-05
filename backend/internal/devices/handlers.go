@@ -237,3 +237,63 @@ func (h Handler) UpdateICMPCheck(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(d)
 }
+
+// UpdateSSHCheck backs PUT /api/v1/devices/{id}/ssh-check -- configures the
+// optional SSH reachability monitor (TCP-connect + optional banner match).
+func (h Handler) UpdateSSHCheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "device ID is required", 400)
+		return
+	}
+	var req SSHCheckRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON", 400)
+		return
+	}
+	if err := h.Repo.UpdateSSHCheck(r.Context(), id, req); err != nil {
+		http.Error(w, "failed to save SSH check configuration: "+err.Error(), 500)
+		return
+	}
+	d, err := h.Repo.GetByID(r.Context(), id)
+	if err != nil {
+		http.Error(w, "device not found", 404)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(d)
+}
+
+// UpdateTelnetCheck backs PUT /api/v1/devices/{id}/telnet-check -- mirrors
+// UpdateSSHCheck for the Telnet reachability monitor.
+func (h Handler) UpdateTelnetCheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "device ID is required", 400)
+		return
+	}
+	var req TelnetCheckRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON", 400)
+		return
+	}
+	if err := h.Repo.UpdateTelnetCheck(r.Context(), id, req); err != nil {
+		http.Error(w, "failed to save Telnet check configuration: "+err.Error(), 500)
+		return
+	}
+	d, err := h.Repo.GetByID(r.Context(), id)
+	if err != nil {
+		http.Error(w, "device not found", 404)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(d)
+}

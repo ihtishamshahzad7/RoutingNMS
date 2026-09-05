@@ -38,6 +38,10 @@ type Device = {
   dnsEnabled: boolean;
   dnsHostname?: string;
   pushEnabled: boolean;
+  sshEnabled: boolean;
+  sshPort?: number;
+  telnetEnabled: boolean;
+  telnetPort?: number;
 };
 
 type PingResult = { reachable: boolean; rttMs: number; lossPct: number; probedAt: string; error?: string };
@@ -47,6 +51,59 @@ type MetricSeries = { metric: string; points: MetricPoint[] };
 
 type RowState = "loading" | "up" | "down" | "unmonitored";
 type DNSLive = { live: { resolved: boolean; latencyMs: number; error?: string } };
+type ReachLive = { live: { reachable: boolean; latencyMs: number; error?: string } };
+
+function SSHCell({ device }: { device: Device }) {
+  const [data, setData] = useState<ReachLive | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    if (!device.sshEnabled) return;
+    let active = true;
+    apiFetch<ReachLive>(`/ssh/${device.id}/live`)
+      .then((d) => { if (active) setData(d); })
+      .catch(() => { if (active) setError(true); });
+    return () => { active = false; };
+  }, [device.id, device.sshEnabled]);
+
+  if (!device.sshEnabled) return <span className="text-[10px] text-[#484F58]">—</span>;
+  if (error) return <span className="text-[10px] text-[#F78166]">unavailable</span>;
+  if (!data?.live) return <span className="text-[10px] text-[#8B949E]">…</span>;
+
+  const up = data.live.reachable;
+  return (
+    <div className="w-20">
+      <StatusPill status={up ? "up" : "down"} label={up ? "Reachable" : "Down"} />
+      <div className="mt-1 font-mono text-[10px] text-[#8B949E]">port {device.sshPort || 22}</div>
+    </div>
+  );
+}
+
+function TelnetCell({ device }: { device: Device }) {
+  const [data, setData] = useState<ReachLive | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    if (!device.telnetEnabled) return;
+    let active = true;
+    apiFetch<ReachLive>(`/telnet/${device.id}/live`)
+      .then((d) => { if (active) setData(d); })
+      .catch(() => { if (active) setError(true); });
+    return () => { active = false; };
+  }, [device.id, device.telnetEnabled]);
+
+  if (!device.telnetEnabled) return <span className="text-[10px] text-[#484F58]">—</span>;
+  if (error) return <span className="text-[10px] text-[#F78166]">unavailable</span>;
+  if (!data?.live) return <span className="text-[10px] text-[#8B949E]">…</span>;
+
+  const up = data.live.reachable;
+  return (
+    <div className="w-20">
+      <StatusPill status={up ? "up" : "down"} label={up ? "Reachable" : "Down"} />
+      <div className="mt-1 font-mono text-[10px] text-[#8B949E]">port {device.telnetPort || 23}</div>
+    </div>
+  );
+}
 
 function DnsCell({ device }: { device: Device }) {
   const [data, setData] = useState<DNSLive | null>(null);
@@ -217,6 +274,12 @@ function DeviceRow({ device }: { device: Device }) {
         <DnsCell device={device} />
       </td>
       <td className="py-3 pr-3 align-top">
+        <SSHCell device={device} />
+      </td>
+      <td className="py-3 pr-3 align-top">
+        <TelnetCell device={device} />
+      </td>
+      <td className="py-3 pr-3 align-top">
         <PushCell device={device} />
       </td>
       <td className="py-3 pr-4 align-top">
@@ -338,19 +401,21 @@ export default function ReachabilityPage() {
                 <th>ICMP / Ping</th>
                 <th>HTTP check</th>
                 <th>DNS check</th>
+                <th>SSH</th>
+                <th>Telnet</th>
                 <th>Push heartbeat</th>
                 <th>Trace</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={6} className="py-10 text-center text-[#8B949E]">Loading reachability board…</td></tr>
+                <tr><td colSpan={8} className="py-10 text-center text-[#8B949E]">Loading reachability board…</td></tr>
               ) : filtered.length ? (
                 filtered.map((d) => (
                   <FilteredRow key={d.id} device={d} filter={filter} />
                 ))
               ) : (
-                <tr><td colSpan={6} className="py-10 text-center text-[#8B949E]">No devices match.</td></tr>
+                <tr><td colSpan={8} className="py-10 text-center text-[#8B949E]">No devices match.</td></tr>
               )}
             </tbody>
           </table>

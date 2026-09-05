@@ -64,6 +64,16 @@ type Record struct {
 	PushLastSeenAt            *time.Time `json:"pushLastSeenAt,omitempty"`
 	PushLastStatus            string     `json:"pushLastStatus,omitempty"`
 	PushLastMessage           string     `json:"pushLastMessage,omitempty"`
+	SSHEnabled                bool       `json:"sshEnabled"`
+	SSHPort                   int        `json:"sshPort"`
+	SSHBannerKeyword          string     `json:"sshBannerKeyword,omitempty"`
+	SSHTimeoutMS              int        `json:"sshTimeoutMs"`
+	SSHIntervalSeconds        int        `json:"sshIntervalSeconds"`
+	TelnetEnabled             bool       `json:"telnetEnabled"`
+	TelnetPort                int        `json:"telnetPort"`
+	TelnetBannerKeyword       string     `json:"telnetBannerKeyword,omitempty"`
+	TelnetTimeoutMS           int        `json:"telnetTimeoutMs"`
+	TelnetIntervalSeconds     int        `json:"telnetIntervalSeconds"`
 }
 
 // ICMPCheckRequest configures the dedicated ICMP ping poller (internal/ping)
@@ -112,6 +122,27 @@ type PushCheckRequest struct {
 	GracePeriodSeconds int  `json:"gracePeriodSeconds"`
 }
 
+// SSHCheckRequest configures the optional SSH reachability monitor on a
+// device: a TCP-connect check to the configured port, with an optional
+// banner-keyword match against the SSH identification banner.
+type SSHCheckRequest struct {
+	Enabled         bool   `json:"enabled"`
+	Port            int    `json:"port"`
+	BannerKeyword   string `json:"bannerKeyword"`
+	TimeoutMS       int    `json:"timeoutMs"`
+	IntervalSeconds int    `json:"intervalSeconds"`
+}
+
+// TelnetCheckRequest configures the optional Telnet reachability monitor on
+// a device, mirroring SSHCheckRequest.
+type TelnetCheckRequest struct {
+	Enabled         bool   `json:"enabled"`
+	Port            int    `json:"port"`
+	BannerKeyword   string `json:"bannerKeyword"`
+	TimeoutMS       int    `json:"timeoutMs"`
+	IntervalSeconds int    `json:"intervalSeconds"`
+}
+
 func (r Repository) Create(ctx context.Context, in DeviceInput) (Record, error) {
 	if r.DB == nil {
 		return Record{}, fmt.Errorf("device repository is not initialized")
@@ -132,7 +163,7 @@ func (r Repository) List(ctx context.Context, organizationID string) ([]Record, 
 	if r.DB == nil {
 		return nil, fmt.Errorf("device repository is not initialized")
 	}
-	rows, err := r.DB.Query(ctx, `SELECT id,organization_id,name,address,device_type,vendor,model,serial_number,enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port,http_check_enabled,http_url,http_expected_status,http_keyword,http_timeout_ms,icmp_enabled,icmp_interval_seconds,icmp_packet_size,icmp_count,icmp_retries,dns_enabled,dns_hostname,dns_record_type,dns_resolver_server,dns_expected_answer,dns_interval_seconds,push_enabled,COALESCE(push_token,''),push_interval_seconds,push_grace_period_seconds,push_last_seen_at,push_last_status,push_last_message FROM devices WHERE organization_id=$1 ORDER BY name`, organizationID)
+	rows, err := r.DB.Query(ctx, `SELECT id,organization_id,name,address,device_type,vendor,model,serial_number,enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port,http_check_enabled,http_url,http_expected_status,http_keyword,http_timeout_ms,icmp_enabled,icmp_interval_seconds,icmp_packet_size,icmp_count,icmp_retries,dns_enabled,dns_hostname,dns_record_type,dns_resolver_server,dns_expected_answer,dns_interval_seconds,push_enabled,COALESCE(push_token,''),push_interval_seconds,push_grace_period_seconds,push_last_seen_at,push_last_status,push_last_message,ssh_enabled,ssh_port,ssh_banner_keyword,ssh_timeout_ms,ssh_interval_seconds,telnet_enabled,telnet_port,telnet_banner_keyword,telnet_timeout_ms,telnet_interval_seconds FROM devices WHERE organization_id=$1 ORDER BY name`, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +171,7 @@ func (r Repository) List(ctx context.Context, organizationID string) ([]Record, 
 	items := []Record{}
 	for rows.Next() {
 		var d Record
-		if err := rows.Scan(&d.ID, &d.OrganizationID, &d.Name, &d.Address, &d.DeviceType, &d.Vendor, &d.Model, &d.SerialNumber, &d.Enabled, &d.MonitoringIntervalSeconds, &d.SNMPEnabled, &d.SNMPVersion, &d.SNMPPort, &d.HTTPCheckEnabled, &d.HTTPURL, &d.HTTPExpectedStatus, &d.HTTPKeyword, &d.HTTPTimeoutMS, &d.ICMPEnabled, &d.ICMPIntervalSeconds, &d.ICMPPacketSize, &d.ICMPCount, &d.ICMPRetries, &d.DNSEnabled, &d.DNSHostname, &d.DNSRecordType, &d.DNSResolverServer, &d.DNSExpectedAnswer, &d.DNSIntervalSeconds, &d.PushEnabled, &d.PushToken, &d.PushIntervalSeconds, &d.PushGracePeriodSeconds, &d.PushLastSeenAt, &d.PushLastStatus, &d.PushLastMessage); err != nil {
+		if err := rows.Scan(&d.ID, &d.OrganizationID, &d.Name, &d.Address, &d.DeviceType, &d.Vendor, &d.Model, &d.SerialNumber, &d.Enabled, &d.MonitoringIntervalSeconds, &d.SNMPEnabled, &d.SNMPVersion, &d.SNMPPort, &d.HTTPCheckEnabled, &d.HTTPURL, &d.HTTPExpectedStatus, &d.HTTPKeyword, &d.HTTPTimeoutMS, &d.ICMPEnabled, &d.ICMPIntervalSeconds, &d.ICMPPacketSize, &d.ICMPCount, &d.ICMPRetries, &d.DNSEnabled, &d.DNSHostname, &d.DNSRecordType, &d.DNSResolverServer, &d.DNSExpectedAnswer, &d.DNSIntervalSeconds, &d.PushEnabled, &d.PushToken, &d.PushIntervalSeconds, &d.PushGracePeriodSeconds, &d.PushLastSeenAt, &d.PushLastStatus, &d.PushLastMessage, &d.SSHEnabled, &d.SSHPort, &d.SSHBannerKeyword, &d.SSHTimeoutMS, &d.SSHIntervalSeconds, &d.TelnetEnabled, &d.TelnetPort, &d.TelnetBannerKeyword, &d.TelnetTimeoutMS, &d.TelnetIntervalSeconds); err != nil {
 			return nil, err
 		}
 		d.SNMPConfigured = d.SNMPEnabled
@@ -156,7 +187,7 @@ func (r Repository) ListAllEnabled(ctx context.Context) ([]Record, error) {
 	if r.DB == nil {
 		return nil, fmt.Errorf("device repository is not initialized")
 	}
-	rows, err := r.DB.Query(ctx, `SELECT id,organization_id,name,address,device_type,vendor,model,serial_number,enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port,http_check_enabled,http_url,http_expected_status,http_keyword,http_timeout_ms,icmp_enabled,icmp_interval_seconds,icmp_packet_size,icmp_count,icmp_retries,dns_enabled,dns_hostname,dns_record_type,dns_resolver_server,dns_expected_answer,dns_interval_seconds,push_enabled,COALESCE(push_token,''),push_interval_seconds,push_grace_period_seconds,push_last_seen_at,push_last_status,push_last_message FROM devices WHERE enabled=true ORDER BY name`)
+	rows, err := r.DB.Query(ctx, `SELECT id,organization_id,name,address,device_type,vendor,model,serial_number,enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port,http_check_enabled,http_url,http_expected_status,http_keyword,http_timeout_ms,icmp_enabled,icmp_interval_seconds,icmp_packet_size,icmp_count,icmp_retries,dns_enabled,dns_hostname,dns_record_type,dns_resolver_server,dns_expected_answer,dns_interval_seconds,push_enabled,COALESCE(push_token,''),push_interval_seconds,push_grace_period_seconds,push_last_seen_at,push_last_status,push_last_message,ssh_enabled,ssh_port,ssh_banner_keyword,ssh_timeout_ms,ssh_interval_seconds,telnet_enabled,telnet_port,telnet_banner_keyword,telnet_timeout_ms,telnet_interval_seconds FROM devices WHERE enabled=true ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +195,7 @@ func (r Repository) ListAllEnabled(ctx context.Context) ([]Record, error) {
 	items := []Record{}
 	for rows.Next() {
 		var d Record
-		if err := rows.Scan(&d.ID, &d.OrganizationID, &d.Name, &d.Address, &d.DeviceType, &d.Vendor, &d.Model, &d.SerialNumber, &d.Enabled, &d.MonitoringIntervalSeconds, &d.SNMPEnabled, &d.SNMPVersion, &d.SNMPPort, &d.HTTPCheckEnabled, &d.HTTPURL, &d.HTTPExpectedStatus, &d.HTTPKeyword, &d.HTTPTimeoutMS, &d.ICMPEnabled, &d.ICMPIntervalSeconds, &d.ICMPPacketSize, &d.ICMPCount, &d.ICMPRetries, &d.DNSEnabled, &d.DNSHostname, &d.DNSRecordType, &d.DNSResolverServer, &d.DNSExpectedAnswer, &d.DNSIntervalSeconds, &d.PushEnabled, &d.PushToken, &d.PushIntervalSeconds, &d.PushGracePeriodSeconds, &d.PushLastSeenAt, &d.PushLastStatus, &d.PushLastMessage); err != nil {
+		if err := rows.Scan(&d.ID, &d.OrganizationID, &d.Name, &d.Address, &d.DeviceType, &d.Vendor, &d.Model, &d.SerialNumber, &d.Enabled, &d.MonitoringIntervalSeconds, &d.SNMPEnabled, &d.SNMPVersion, &d.SNMPPort, &d.HTTPCheckEnabled, &d.HTTPURL, &d.HTTPExpectedStatus, &d.HTTPKeyword, &d.HTTPTimeoutMS, &d.ICMPEnabled, &d.ICMPIntervalSeconds, &d.ICMPPacketSize, &d.ICMPCount, &d.ICMPRetries, &d.DNSEnabled, &d.DNSHostname, &d.DNSRecordType, &d.DNSResolverServer, &d.DNSExpectedAnswer, &d.DNSIntervalSeconds, &d.PushEnabled, &d.PushToken, &d.PushIntervalSeconds, &d.PushGracePeriodSeconds, &d.PushLastSeenAt, &d.PushLastStatus, &d.PushLastMessage, &d.SSHEnabled, &d.SSHPort, &d.SSHBannerKeyword, &d.SSHTimeoutMS, &d.SSHIntervalSeconds, &d.TelnetEnabled, &d.TelnetPort, &d.TelnetBannerKeyword, &d.TelnetTimeoutMS, &d.TelnetIntervalSeconds); err != nil {
 			return nil, err
 		}
 		d.SNMPConfigured = d.SNMPEnabled
@@ -265,6 +296,46 @@ func (r Repository) UpdatePushCheck(ctx context.Context, id string, req PushChec
 	return token, nil
 }
 
+// UpdateSSHCheck configures (or disables) the optional SSH reachability
+// monitor on a device.
+func (r Repository) UpdateSSHCheck(ctx context.Context, id string, req SSHCheckRequest) error {
+	if r.DB == nil {
+		return fmt.Errorf("device repository is not initialized")
+	}
+	if req.Port <= 0 {
+		req.Port = 22
+	}
+	if req.TimeoutMS <= 0 {
+		req.TimeoutMS = 5000
+	}
+	if req.IntervalSeconds < 5 {
+		req.IntervalSeconds = 60
+	}
+	_, err := r.DB.Exec(ctx, `UPDATE devices SET ssh_enabled=$2,ssh_port=$3,ssh_banner_keyword=$4,ssh_timeout_ms=$5,ssh_interval_seconds=$6,updated_at=NOW() WHERE id=$1`,
+		id, req.Enabled, req.Port, req.BannerKeyword, req.TimeoutMS, req.IntervalSeconds)
+	return err
+}
+
+// UpdateTelnetCheck configures (or disables) the optional Telnet
+// reachability monitor on a device.
+func (r Repository) UpdateTelnetCheck(ctx context.Context, id string, req TelnetCheckRequest) error {
+	if r.DB == nil {
+		return fmt.Errorf("device repository is not initialized")
+	}
+	if req.Port <= 0 {
+		req.Port = 23
+	}
+	if req.TimeoutMS <= 0 {
+		req.TimeoutMS = 5000
+	}
+	if req.IntervalSeconds < 5 {
+		req.IntervalSeconds = 60
+	}
+	_, err := r.DB.Exec(ctx, `UPDATE devices SET telnet_enabled=$2,telnet_port=$3,telnet_banner_keyword=$4,telnet_timeout_ms=$5,telnet_interval_seconds=$6,updated_at=NOW() WHERE id=$1`,
+		id, req.Enabled, req.Port, req.BannerKeyword, req.TimeoutMS, req.IntervalSeconds)
+	return err
+}
+
 func (r Repository) UpdateSNMP(ctx context.Context, id string, req SNMPConfigRequest) error {
 	if r.DB == nil {
 		return fmt.Errorf("device repository is not initialized")
@@ -294,8 +365,8 @@ func (r Repository) GetByID(ctx context.Context, id string) (Record, error) {
 		return Record{}, fmt.Errorf("device repository is not initialized")
 	}
 	var d Record
-	err := r.DB.QueryRow(ctx, `SELECT id,organization_id,name,address,device_type,COALESCE(vendor,''),COALESCE(model,''),COALESCE(serial_number,''),enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port,provisioning_template_id,last_provisioned_at,http_check_enabled,http_url,http_expected_status,http_keyword,http_timeout_ms,icmp_enabled,icmp_interval_seconds,icmp_packet_size,icmp_count,icmp_retries,dns_enabled,dns_hostname,dns_record_type,dns_resolver_server,dns_expected_answer,dns_interval_seconds,push_enabled,COALESCE(push_token,''),push_interval_seconds,push_grace_period_seconds,push_last_seen_at,push_last_status,push_last_message FROM devices WHERE id=$1`, id).
-		Scan(&d.ID, &d.OrganizationID, &d.Name, &d.Address, &d.DeviceType, &d.Vendor, &d.Model, &d.SerialNumber, &d.Enabled, &d.MonitoringIntervalSeconds, &d.SNMPEnabled, &d.SNMPVersion, &d.SNMPPort, &d.ProvisioningTemplateID, &d.LastProvisionedAt, &d.HTTPCheckEnabled, &d.HTTPURL, &d.HTTPExpectedStatus, &d.HTTPKeyword, &d.HTTPTimeoutMS, &d.ICMPEnabled, &d.ICMPIntervalSeconds, &d.ICMPPacketSize, &d.ICMPCount, &d.ICMPRetries, &d.DNSEnabled, &d.DNSHostname, &d.DNSRecordType, &d.DNSResolverServer, &d.DNSExpectedAnswer, &d.DNSIntervalSeconds, &d.PushEnabled, &d.PushToken, &d.PushIntervalSeconds, &d.PushGracePeriodSeconds, &d.PushLastSeenAt, &d.PushLastStatus, &d.PushLastMessage)
+	err := r.DB.QueryRow(ctx, `SELECT id,organization_id,name,address,device_type,COALESCE(vendor,''),COALESCE(model,''),COALESCE(serial_number,''),enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port,provisioning_template_id,last_provisioned_at,http_check_enabled,http_url,http_expected_status,http_keyword,http_timeout_ms,icmp_enabled,icmp_interval_seconds,icmp_packet_size,icmp_count,icmp_retries,dns_enabled,dns_hostname,dns_record_type,dns_resolver_server,dns_expected_answer,dns_interval_seconds,push_enabled,COALESCE(push_token,''),push_interval_seconds,push_grace_period_seconds,push_last_seen_at,push_last_status,push_last_message,ssh_enabled,ssh_port,ssh_banner_keyword,ssh_timeout_ms,ssh_interval_seconds,telnet_enabled,telnet_port,telnet_banner_keyword,telnet_timeout_ms,telnet_interval_seconds FROM devices WHERE id=$1`, id).
+		Scan(&d.ID, &d.OrganizationID, &d.Name, &d.Address, &d.DeviceType, &d.Vendor, &d.Model, &d.SerialNumber, &d.Enabled, &d.MonitoringIntervalSeconds, &d.SNMPEnabled, &d.SNMPVersion, &d.SNMPPort, &d.ProvisioningTemplateID, &d.LastProvisionedAt, &d.HTTPCheckEnabled, &d.HTTPURL, &d.HTTPExpectedStatus, &d.HTTPKeyword, &d.HTTPTimeoutMS, &d.ICMPEnabled, &d.ICMPIntervalSeconds, &d.ICMPPacketSize, &d.ICMPCount, &d.ICMPRetries, &d.DNSEnabled, &d.DNSHostname, &d.DNSRecordType, &d.DNSResolverServer, &d.DNSExpectedAnswer, &d.DNSIntervalSeconds, &d.PushEnabled, &d.PushToken, &d.PushIntervalSeconds, &d.PushGracePeriodSeconds, &d.PushLastSeenAt, &d.PushLastStatus, &d.PushLastMessage, &d.SSHEnabled, &d.SSHPort, &d.SSHBannerKeyword, &d.SSHTimeoutMS, &d.SSHIntervalSeconds, &d.TelnetEnabled, &d.TelnetPort, &d.TelnetBannerKeyword, &d.TelnetTimeoutMS, &d.TelnetIntervalSeconds)
 	d.SNMPConfigured = d.SNMPEnabled
 	return d, err
 }

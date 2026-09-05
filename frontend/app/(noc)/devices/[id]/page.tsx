@@ -6,8 +6,9 @@ import { FormEvent, useEffect, useState } from "react";
 import { ApiError, apiFetch } from "../../../../lib/api";
 import { MetricChart } from "../../../../components/metric-chart";
 
-type Device={id:string;name:string;address:string;deviceType:string;vendor?:string;serialNumber?:string;enabled:boolean;snmpEnabled:boolean;snmpVersion:string;snmpPort:number;snmpConfigured:boolean;provisioningTemplateId?:number|null;lastProvisionedAt?:string;httpCheckEnabled:boolean;httpUrl?:string;httpExpectedStatus:number;httpKeyword?:string;httpTimeoutMs:number;icmpEnabled:boolean;icmpIntervalSeconds:number;icmpPacketSize:number;icmpCount:number;icmpRetries:number;dnsEnabled:boolean;dnsHostname?:string;dnsRecordType:string;dnsResolverServer?:string;dnsExpectedAnswer?:string;dnsIntervalSeconds:number;pushEnabled:boolean;pushToken?:string;pushIntervalSeconds:number;pushGracePeriodSeconds:number;pushLastSeenAt?:string;pushLastStatus?:string;pushLastMessage?:string};
+type Device={id:string;name:string;address:string;deviceType:string;vendor?:string;serialNumber?:string;enabled:boolean;snmpEnabled:boolean;snmpVersion:string;snmpPort:number;snmpConfigured:boolean;provisioningTemplateId?:number|null;lastProvisionedAt?:string;httpCheckEnabled:boolean;httpUrl?:string;httpExpectedStatus:number;httpKeyword?:string;httpTimeoutMs:number;icmpEnabled:boolean;icmpIntervalSeconds:number;icmpPacketSize:number;icmpCount:number;icmpRetries:number;dnsEnabled:boolean;dnsHostname?:string;dnsRecordType:string;dnsResolverServer?:string;dnsExpectedAnswer?:string;dnsIntervalSeconds:number;pushEnabled:boolean;pushToken?:string;pushIntervalSeconds:number;pushGracePeriodSeconds:number;pushLastSeenAt?:string;pushLastStatus?:string;pushLastMessage?:string;sshEnabled:boolean;sshPort:number;sshBannerKeyword?:string;sshTimeoutMs:number;sshIntervalSeconds:number;telnetEnabled:boolean;telnetPort:number;telnetBannerKeyword?:string;telnetTimeoutMs:number;telnetIntervalSeconds:number};
 type DNSLive={live:{resolved:boolean;answers?:string[];latencyMs:number;expectedMatch?:boolean|null;error?:string}};
+type ReachLive={live:{reachable:boolean;banner?:string;latencyMs:number;bannerMatched?:boolean|null;error?:string}};
 type ProvTemplate={id:number;name:string;scriptBody:string};
 type Preview={renderedScript:string;password:string;fetchCommand:string};
 type Interface={id:number;deviceId:string;ifIndex:number;name:string;description:string;adminUp:boolean;operUp:boolean;inOctets:number;outOctets:number;inErrors:number;outErrors:number;lastDiscoveredAt?:string};
@@ -48,6 +49,16 @@ export default function DeviceDetailsPage(){
  useEffect(()=>{loadDNSLive();const t=setInterval(loadDNSLive,15000);return()=>clearInterval(t)},[id]);
  async function checkDNSNow(){setDnsChecking(true);try{await apiFetch(`/dns/${id}/check`,{method:"POST"});await loadDNSLive()}catch{ /* best-effort */ }finally{setDnsChecking(false)}}
  async function saveDNSCheck(e:FormEvent<HTMLFormElement>){e.preventDefault();if(!device)return;setDnsSaving(true);setDnsMessage("");const data=new FormData(e.currentTarget);try{const updated=await apiFetch<Device>(`/devices/${device.id}/dns-check`,{method:"PUT",body:JSON.stringify({enabled:data.get("enabled")==="on",hostname:data.get("hostname"),recordType:data.get("recordType"),resolverServer:data.get("resolverServer"),expectedAnswer:data.get("expectedAnswer"),intervalSeconds:Number(data.get("intervalSeconds")||60)})});setDevice(updated);setDnsMessage("DNS check configuration saved.")}catch(e){setDnsMessage(e instanceof ApiError?e.message:"Failed to save DNS check configuration.")}finally{setDnsSaving(false)}}
+ const [sshSaving,setSshSaving]=useState(false),[sshMessage,setSshMessage]=useState(""),[sshLive,setSshLive]=useState<ReachLive|null>(null),[sshChecking,setSshChecking]=useState(false);
+ async function loadSSHLive(){try{setSshLive(await apiFetch<ReachLive>(`/ssh/${id}/live`))}catch{ /* best-effort */ }}
+ useEffect(()=>{loadSSHLive();const t=setInterval(loadSSHLive,15000);return()=>clearInterval(t)},[id]);
+ async function checkSSHNow(){setSshChecking(true);try{await apiFetch(`/ssh/${id}/check`,{method:"POST"});await loadSSHLive()}catch{ /* best-effort */ }finally{setSshChecking(false)}}
+ async function saveSSHCheck(e:FormEvent<HTMLFormElement>){e.preventDefault();if(!device)return;setSshSaving(true);setSshMessage("");const data=new FormData(e.currentTarget);try{const updated=await apiFetch<Device>(`/devices/${device.id}/ssh-check`,{method:"PUT",body:JSON.stringify({enabled:data.get("enabled")==="on",port:Number(data.get("port")||22),bannerKeyword:data.get("bannerKeyword"),timeoutMs:Number(data.get("timeoutMs")||5000),intervalSeconds:Number(data.get("intervalSeconds")||60)})});setDevice(updated);setSshMessage("SSH check configuration saved.")}catch(e){setSshMessage(e instanceof ApiError?e.message:"Failed to save SSH check configuration.")}finally{setSshSaving(false)}}
+ const [telnetSaving,setTelnetSaving]=useState(false),[telnetMessage,setTelnetMessage]=useState(""),[telnetLive,setTelnetLive]=useState<ReachLive|null>(null),[telnetChecking,setTelnetChecking]=useState(false);
+ async function loadTelnetLive(){try{setTelnetLive(await apiFetch<ReachLive>(`/telnet/${id}/live`))}catch{ /* best-effort */ }}
+ useEffect(()=>{loadTelnetLive();const t=setInterval(loadTelnetLive,15000);return()=>clearInterval(t)},[id]);
+ async function checkTelnetNow(){setTelnetChecking(true);try{await apiFetch(`/telnet/${id}/check`,{method:"POST"});await loadTelnetLive()}catch{ /* best-effort */ }finally{setTelnetChecking(false)}}
+ async function saveTelnetCheck(e:FormEvent<HTMLFormElement>){e.preventDefault();if(!device)return;setTelnetSaving(true);setTelnetMessage("");const data=new FormData(e.currentTarget);try{const updated=await apiFetch<Device>(`/devices/${device.id}/telnet-check`,{method:"PUT",body:JSON.stringify({enabled:data.get("enabled")==="on",port:Number(data.get("port")||23),bannerKeyword:data.get("bannerKeyword"),timeoutMs:Number(data.get("timeoutMs")||5000),intervalSeconds:Number(data.get("intervalSeconds")||60)})});setDevice(updated);setTelnetMessage("Telnet check configuration saved.")}catch(e){setTelnetMessage(e instanceof ApiError?e.message:"Failed to save Telnet check configuration.")}finally{setTelnetSaving(false)}}
  const [pushSaving,setPushSaving]=useState(false),[pushMessage,setPushMessage]=useState(""),[copied,setCopied]=useState(false);
  async function savePushCheck(e:FormEvent<HTMLFormElement>){e.preventDefault();if(!device)return;setPushSaving(true);setPushMessage("");const data=new FormData(e.currentTarget);try{const updated=await apiFetch<Device>(`/devices/${device.id}/push-check`,{method:"PUT",body:JSON.stringify({enabled:data.get("enabled")==="on",intervalSeconds:Number(data.get("intervalSeconds")||60),gracePeriodSeconds:Number(data.get("gracePeriodSeconds")||30)})});setDevice(updated);setPushMessage("Push monitor configuration saved.")}catch(e){setPushMessage(e instanceof ApiError?e.message:"Failed to save push monitor configuration.")}finally{setPushSaving(false)}}
  function pushURL(token?:string){if(typeof window==="undefined"||!token)return"";return `${window.location.origin}/api/v1/push/${token}?status=up&msg=OK`}
@@ -65,6 +76,8 @@ export default function DeviceDetailsPage(){
     {label:"ICMP Ping",on:device.icmpEnabled},
     {label:"HTTP(S) Check",on:device.httpCheckEnabled},
     {label:"DNS Check",on:device.dnsEnabled},
+    {label:"SSH Reachability",on:device.sshEnabled},
+    {label:"Telnet Reachability",on:device.telnetEnabled},
     {label:"Push Heartbeat",on:device.pushEnabled},
    ].map(m=>(
     <span key={m.label} className={`rounded-full border px-3 py-1 font-medium ${m.on?"border-emerald-800 bg-emerald-950/40 text-emerald-300":"border-slate-800 bg-slate-950 text-slate-600"}`}>
@@ -139,6 +152,46 @@ export default function DeviceDetailsPage(){
      <div className="rounded-xl border border-slate-800 bg-slate-950 p-4"><div className="text-xs uppercase text-slate-500">Answers</div><div className="mt-2 text-sm font-medium text-slate-300">{dnsLive.live.answers?.join(", ")||"—"}</div></div>
     </div>}
    {dnsLive?.live?.error&&<div className="mt-3 text-xs text-amber-400">{dnsLive.live.error}</div>}
+  </div>}
+ </section>
+ <section className={`mb-6 ${card}`}>
+  <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">SSH Reachability</h2><p className="mt-1 text-xs text-slate-500">TCP-connect to the configured port, with an optional identification-banner keyword match (no login is attempted).</p></div><button onClick={checkSSHNow} disabled={sshChecking} className="rounded-lg border border-cyan-700 bg-cyan-950/40 px-3 py-2 text-xs text-cyan-300 hover:bg-cyan-900/40 disabled:opacity-50">{sshChecking?"Checking…":"Check now"}</button></div>
+  <form onSubmit={saveSSHCheck} className="mt-4 grid gap-4 rounded-lg border border-slate-800 bg-slate-950 p-4 sm:grid-cols-2">
+   <label className="sm:col-span-2 flex items-center gap-3 text-sm"><input name="enabled" type="checkbox" defaultChecked={device.sshEnabled} className="h-4 w-4"/><span><b>Enable SSH check</b><span className="ml-2 text-xs text-slate-500">Feeds alerting on unreachability</span></span></label>
+   <label className="text-xs text-slate-400">Port<input name="port" type="number" defaultValue={device.sshPort||22} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-cyan-500"/></label>
+   <label className="text-xs text-slate-400">Timeout (ms)<input name="timeoutMs" type="number" defaultValue={device.sshTimeoutMs||5000} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-cyan-500"/></label>
+   <label className="text-xs text-slate-400">Interval (s)<input name="intervalSeconds" type="number" min={5} defaultValue={device.sshIntervalSeconds||60} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-cyan-500"/></label>
+   <label className="text-xs text-slate-400">Banner keyword (optional)<input name="bannerKeyword" defaultValue={device.sshBannerKeyword} placeholder="e.g. OpenSSH" className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-cyan-500"/></label>
+   <div className="sm:col-span-2"><button disabled={sshSaving} className="rounded-lg bg-cyan-600 px-4 py-2 text-xs font-semibold hover:bg-cyan-500 disabled:opacity-50">{sshSaving?"Saving…":"Save SSH check"}</button>{sshMessage&&<span className="ml-3 text-xs text-slate-400">{sshMessage}</span>}</div>
+  </form>
+  {device.sshEnabled&&<div className="mt-4">
+   {!sshLive?.live?<div className="text-sm text-slate-500">No SSH check data yet — waiting for the poller or a manual check.</div>
+    :<div className="grid gap-4 sm:grid-cols-3">
+     <div className="rounded-xl border border-slate-800 bg-slate-950 p-4"><div className="text-xs uppercase text-slate-500">Status</div><div className={`mt-2 text-xl font-bold ${sshLive.live.reachable?"text-emerald-400":"text-red-400"}`}>{sshLive.live.reachable?"REACHABLE":"DOWN"}</div></div>
+     <div className="rounded-xl border border-slate-800 bg-slate-950 p-4"><div className="text-xs uppercase text-slate-500">Latency</div><div className="mt-2 text-xl font-bold">{sshLive.live.latencyMs!=null?`${sshLive.live.latencyMs.toFixed(0)} ms`:"—"}</div></div>
+     <div className="rounded-xl border border-slate-800 bg-slate-950 p-4"><div className="text-xs uppercase text-slate-500">Banner</div><div className="mt-2 text-sm font-medium text-slate-300">{sshLive.live.banner||"—"}</div></div>
+    </div>}
+   {sshLive?.live?.error&&<div className="mt-3 text-xs text-amber-400">{sshLive.live.error}</div>}
+  </div>}
+ </section>
+ <section className={`mb-6 ${card}`}>
+  <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">Telnet Reachability</h2><p className="mt-1 text-xs text-slate-500">TCP-connect to the configured port, with an optional banner/login-prompt keyword match (no login is attempted).</p></div><button onClick={checkTelnetNow} disabled={telnetChecking} className="rounded-lg border border-cyan-700 bg-cyan-950/40 px-3 py-2 text-xs text-cyan-300 hover:bg-cyan-900/40 disabled:opacity-50">{telnetChecking?"Checking…":"Check now"}</button></div>
+  <form onSubmit={saveTelnetCheck} className="mt-4 grid gap-4 rounded-lg border border-slate-800 bg-slate-950 p-4 sm:grid-cols-2">
+   <label className="sm:col-span-2 flex items-center gap-3 text-sm"><input name="enabled" type="checkbox" defaultChecked={device.telnetEnabled} className="h-4 w-4"/><span><b>Enable Telnet check</b><span className="ml-2 text-xs text-slate-500">Feeds alerting on unreachability</span></span></label>
+   <label className="text-xs text-slate-400">Port<input name="port" type="number" defaultValue={device.telnetPort||23} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-cyan-500"/></label>
+   <label className="text-xs text-slate-400">Timeout (ms)<input name="timeoutMs" type="number" defaultValue={device.telnetTimeoutMs||5000} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-cyan-500"/></label>
+   <label className="text-xs text-slate-400">Interval (s)<input name="intervalSeconds" type="number" min={5} defaultValue={device.telnetIntervalSeconds||60} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-cyan-500"/></label>
+   <label className="text-xs text-slate-400">Banner keyword (optional)<input name="bannerKeyword" defaultValue={device.telnetBannerKeyword} placeholder="e.g. login:" className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-cyan-500"/></label>
+   <div className="sm:col-span-2"><button disabled={telnetSaving} className="rounded-lg bg-cyan-600 px-4 py-2 text-xs font-semibold hover:bg-cyan-500 disabled:opacity-50">{telnetSaving?"Saving…":"Save Telnet check"}</button>{telnetMessage&&<span className="ml-3 text-xs text-slate-400">{telnetMessage}</span>}</div>
+  </form>
+  {device.telnetEnabled&&<div className="mt-4">
+   {!telnetLive?.live?<div className="text-sm text-slate-500">No Telnet check data yet — waiting for the poller or a manual check.</div>
+    :<div className="grid gap-4 sm:grid-cols-3">
+     <div className="rounded-xl border border-slate-800 bg-slate-950 p-4"><div className="text-xs uppercase text-slate-500">Status</div><div className={`mt-2 text-xl font-bold ${telnetLive.live.reachable?"text-emerald-400":"text-red-400"}`}>{telnetLive.live.reachable?"REACHABLE":"DOWN"}</div></div>
+     <div className="rounded-xl border border-slate-800 bg-slate-950 p-4"><div className="text-xs uppercase text-slate-500">Latency</div><div className="mt-2 text-xl font-bold">{telnetLive.live.latencyMs!=null?`${telnetLive.live.latencyMs.toFixed(0)} ms`:"—"}</div></div>
+     <div className="rounded-xl border border-slate-800 bg-slate-950 p-4"><div className="text-xs uppercase text-slate-500">Banner</div><div className="mt-2 text-sm font-medium text-slate-300">{telnetLive.live.banner||"—"}</div></div>
+    </div>}
+   {telnetLive?.live?.error&&<div className="mt-3 text-xs text-amber-400">{telnetLive.live.error}</div>}
   </div>}
  </section>
  <section className={`mb-6 ${card}`}>
