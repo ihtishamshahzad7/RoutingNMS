@@ -313,6 +313,27 @@ const CHANNEL_FIELDS: Record<string, [string, string][]> = {
     ["number", "Sender number"],
     ["recipients", "Recipients, comma-separated"],
   ],
+  bark: [
+    ["endpoint", "Bark server endpoint (e.g. https://api.day.app/XXXXXXXX)"],
+    ["group", "Group (optional, default RoutingNMS)"],
+    ["sound", "Sound (optional, default telegraph)"],
+  ],
+  line: [
+    ["channel_access_token", "Channel access token"],
+    ["user_id", "User ID"],
+  ],
+  alerta: [
+    ["api_endpoint", "Alerta API endpoint"],
+    ["api_key", "API key"],
+    ["environment", "Environment (optional)"],
+    ["alert_state", "Alert state (optional, default critical)"],
+    ["recover_state", "Recover state (optional, default cleared)"],
+  ],
+  squadcast: [["webhook_url", "Squadcast webhook URL"]],
+  pagertree: [
+    ["integration_url", "PagerTree integration URL"],
+    ["urgency", "Urgency (optional)"],
+  ],
 };
 
 function ChannelForm({ onSaved }: { onSaved: () => void }) {
@@ -340,7 +361,7 @@ function ChannelForm({ onSaved }: { onSaved: () => void }) {
       <div className="flex flex-wrap gap-3">
         <input className="input" placeholder="Channel name" value={name} onChange={e => setName(e.target.value)} />
         <select className="input" value={type} onChange={e => changeType(e.target.value)}>
-          {["webhook", "slack", "email", "pagerduty", "telegram", "whatsapp", "discord", "teams", "ntfy", "gotify", "pushover", "matrix", "google_chat", "mattermost", "opsgenie", "signal"].map(t => <option key={t} value={t}>{t}</option>)}
+          {["webhook", "slack", "email", "pagerduty", "telegram", "whatsapp", "discord", "teams", "ntfy", "gotify", "pushover", "matrix", "google_chat", "mattermost", "opsgenie", "signal", "bark", "line", "alerta", "squadcast", "pagertree"].map(t => <option key={t} value={t}>{t}</option>)}
         </select>
         {required.map(([key, placeholder]) => (
           <input

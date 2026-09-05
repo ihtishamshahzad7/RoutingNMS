@@ -90,6 +90,16 @@ func (n Notifier) dispatch(client *http.Client, ch PersistedChannel, title, body
 		err = sendOpsgenie(ctx, client, ch, title, message, severity)
 	case "signal":
 		err = sendSignal(ctx, client, ch, message)
+	case "bark":
+		err = sendBark(ctx, client, ch, title, message, severity)
+	case "line":
+		err = sendLine(ctx, client, ch, title, message, severity)
+	case "alerta":
+		err = sendAlerta(ctx, client, ch, title, message, severity)
+	case "squadcast":
+		err = sendSquadcast(ctx, client, ch, title, message, severity)
+	case "pagertree":
+		err = sendPagerTree(ctx, client, ch, title, message, severity)
 	default:
 		err = fmt.Errorf("unsupported channel type %q", ch.ChannelType)
 	}
@@ -620,6 +630,194 @@ func sendSignal(ctx context.Context, client *http.Client, ch PersistedChannel, m
 		return err
 	}
 	return postJSON(ctx, client, signalURL, bodyBytes, nil)
+}
+
+// sendBark posts to a Bark (Apple push bridge) server via a GET request,
+// ported from Uptime Kuma's Bark notification provider. Config: endpoint
+// (e.g. https://api.day.app/XXXXXXXX), group (optional, default
+// "RoutingNMS"), sound (optional, default "telegraph").
+func sendBark(ctx context.Context, client *http.Client, ch PersistedChannel, title, message, severity string) error {
+	endpoint := strings.TrimRight(cfgString(ch.Config, "endpoint", "url"), "/")
+	if endpoint == "" {
+		return fmt.Errorf("endpoint is required")
+	}
+	barkTitle := "RoutingNMS Monitor Down"
+	if severity == "resolved" {
+		barkTitle = "RoutingNMS Monitor Up"
+	}
+	group := cfgString(ch.Config, "group")
+	if group == "" {
+		group = "RoutingNMS"
+	}
+	sound := cfgString(ch.Config, "sound")
+	if sound == "" {
+		sound = "telegraph"
+	}
+	reqURL := fmt.Sprintf("%s/%s/%s?group=%s&sound=%s",
+		endpoint, url.PathEscape(barkTitle), url.PathEscape(message),
+		url.QueryEscape(group), url.QueryEscape(sound))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return err
+	}
+	_ = title
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("bark returned %s", resp.Status)
+	}
+	return nil
+}
+
+// sendLine posts to the LINE Messaging API's push endpoint, ported from
+// Uptime Kuma's Line notification provider. Config: channel_access_token,
+// user_id.
+func sendLine(ctx context.Context, client *http.Client, ch PersistedChannel, title, message, severity string) error {
+	token := cfgString(ch.Config, "channel_access_token")
+	userID := cfgString(ch.Config, "user_id")
+	if token == "" || userID == "" {
+		return fmt.Errorf("channel_access_token and user_id are required")
+	}
+	statusTag := "[🔴 Down]"
+	if severity == "resolved" {
+		statusTag = "[✅ Up]"
+	}
+	text := fmt.Sprintf("RoutingNMS Alert: %s\nName: %s\n%s", statusTag, title, message)
+	payload := map[string]any{
+		"to": userID,
+		"messages": []map[string]any{
+			{"type": "text", "text": text},
+		},
+	}
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	headers := map[string]string{"Authorization": "Bearer " + token}
+	return postJSON(ctx, client, "https://api.line.me/v2/bot/message/push", bodyBytes, headers)
+}
+
+// sendAlerta posts to an Alerta API endpoint, ported from Uptime Kuma's
+// Alerta notification provider. Config: api_endpoint, api_key, environment
+// (optional), alert_state (optional, default "critical", used for the
+// breach severity), recover_state (optional, default "cleared", used for
+// the resolved severity).
+//
+// RoutingNMS does not plumb the breaching rule's subject type/name down to
+// the notifier (Notify only carries title/body/severity), so the "event",
+// "group" and "resource" fields below use the alert title in place of
+// Kuma's per-monitor-type subject description.
+func sendAlerta(ctx context.Context, client *http.Client, ch PersistedChannel, title, message, severity string) error {
+	apiEndpoint := cfgString(ch.Config, "api_endpoint")
+	apiKey := cfgString(ch.Config, "api_key")
+	if apiEndpoint == "" || apiKey == "" {
+		return fmt.Errorf("api_endpoint and api_key are required")
+	}
+	down := severity != "resolved"
+	alertSeverity := cfgString(ch.Config, "alert_state")
+	if alertSeverity == "" {
+		alertSeverity = "critical"
+	}
+	if !down {
+		alertSeverity = cfgString(ch.Config, "recover_state")
+		if alertSeverity == "" {
+			alertSeverity = "cleared"
+		}
+	}
+	text := fmt.Sprintf("Service %s is down.", title)
+	if !down {
+		text = fmt.Sprintf("Service %s is up.", title)
+	}
+	payload := map[string]any{
+		"environment": cfgString(ch.Config, "environment"),
+		"severity":    alertSeverity,
+		"correlate":   []string{"service_up", "service_down"},
+		"service":     []string{"RoutingNMS"},
+		"value":       "Timeout",
+		"tags":        []string{"routingnms"},
+		"attributes":  map[string]any{},
+		"origin":      "routingnms",
+		"type":        "exceptionAlert",
+		"event":       title,
+		"group":       "routingnms-" + title,
+		"resource":    title,
+		"text":        text,
+	}
+	_ = message
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	headers := map[string]string{"Authorization": "Key " + apiKey}
+	return postJSON(ctx, client, apiEndpoint, bodyBytes, headers)
+}
+
+// sendSquadcast posts to a Squadcast webhook, ported from Uptime Kuma's
+// Squadcast notification provider. Config: webhook_url.
+//
+// Simplification: Kuma's Squadcast provider also builds an "AlertAddress"
+// tag from monitor-type-specific hostname/port/url data and copies the
+// monitor's user-defined tags into the payload's tags map. Notify's call
+// site (evaluator.go) only has the rule title/body/severity available --
+// not the breaching subject's tags or connection details -- so the tags
+// map below is left empty rather than adding new plumbing just for this.
+func sendSquadcast(ctx context.Context, client *http.Client, ch PersistedChannel, title, message, severity string) error {
+	webhookURL := cfgString(ch.Config, "webhook_url")
+	if webhookURL == "" {
+		return fmt.Errorf("webhook_url is required")
+	}
+	down := severity != "resolved"
+	status := "resolve"
+	verb := "UP"
+	if down {
+		status = "trigger"
+		verb = "DOWN"
+	}
+	payload := map[string]any{
+		"message":     fmt.Sprintf("%s is %s", title, verb),
+		"description": message,
+		"tags":        map[string]any{},
+		"status":      status,
+		"event_id":    title,
+		"source":      "routingnms",
+	}
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return postJSON(ctx, client, webhookURL, bodyBytes, nil)
+}
+
+// sendPagerTree posts to a PagerTree integration URL, ported from Uptime
+// Kuma's PagerTree notification provider. Config: integration_url, urgency
+// (optional).
+func sendPagerTree(ctx context.Context, client *http.Client, ch PersistedChannel, title, message, severity string) error {
+	integrationURL := cfgString(ch.Config, "integration_url")
+	if integrationURL == "" {
+		return fmt.Errorf("integration_url is required")
+	}
+	down := severity != "resolved"
+	payload := map[string]any{
+		"id": title,
+	}
+	if down {
+		payload["event_type"] = "create"
+		payload["title"] = fmt.Sprintf("RoutingNMS Monitor %q is DOWN", title)
+	} else {
+		payload["event_type"] = "resolve"
+	}
+	if urgency := cfgString(ch.Config, "urgency"); urgency != "" {
+		payload["urgency"] = urgency
+	}
+	_ = message
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return postJSON(ctx, client, integrationURL, bodyBytes, nil)
 }
 
 func postJSON(ctx context.Context, client *http.Client, targetURL string, body []byte, headers map[string]string) error {
