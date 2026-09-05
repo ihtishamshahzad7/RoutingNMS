@@ -30,6 +30,9 @@ type User struct {
 	Username           string
 	PasswordHash       string
 	MustChangePassword bool
+	TwoFASecret        string
+	TwoFAStatus        bool
+	TwoFALastToken     string
 }
 
 // Store persists users and sessions in PostgreSQL.
@@ -67,8 +70,12 @@ func (s Store) Bootstrap(ctx context.Context) error {
 // ErrInvalidCredentials if none exists.
 func (s Store) UserByUsername(ctx context.Context, username string) (User, error) {
 	var u User
-	err := s.DB.QueryRow(ctx, `SELECT id, username, password_hash, must_change_password FROM users WHERE username = $1`, username).
-		Scan(&u.ID, &u.Username, &u.PasswordHash, &u.MustChangePassword)
+	err := s.DB.QueryRow(ctx, `
+		SELECT id, username, password_hash, must_change_password,
+		       twofa_secret, twofa_status, twofa_last_token
+		FROM users WHERE username = $1`, username).
+		Scan(&u.ID, &u.Username, &u.PasswordHash, &u.MustChangePassword,
+			&u.TwoFASecret, &u.TwoFAStatus, &u.TwoFALastToken)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrInvalidCredentials
 	}
@@ -76,6 +83,66 @@ func (s Store) UserByUsername(ctx context.Context, username string) (User, error
 		return User{}, fmt.Errorf("lookup user: %w", err)
 	}
 	return u, nil
+}
+
+// UserByID returns the user with the given id.
+func (s Store) UserByID(ctx context.Context, id int64) (User, error) {
+	var u User
+	err := s.DB.QueryRow(ctx, `
+		SELECT id, username, password_hash, must_change_password,
+		       twofa_secret, twofa_status, twofa_last_token
+		FROM users WHERE id = $1`, id).
+		Scan(&u.ID, &u.Username, &u.PasswordHash, &u.MustChangePassword,
+			&u.TwoFASecret, &u.TwoFAStatus, &u.TwoFALastToken)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return User{}, ErrInvalidCredentials
+	}
+	if err != nil {
+		return User{}, fmt.Errorf("lookup user: %w", err)
+	}
+	return u, nil
+}
+
+// PrepareTwoFA stores a newly generated TOTP secret on the user row without
+// enabling 2FA yet (twofa_status stays false until SaveTwoFA verifies the
+// user actually configured their authenticator app).
+func (s Store) PrepareTwoFA(ctx context.Context, userID int64, secret string) error {
+	_, err := s.DB.Exec(ctx, `UPDATE users SET twofa_secret = $1, updated_at = now() WHERE id = $2`, secret, userID)
+	if err != nil {
+		return fmt.Errorf("prepare 2fa: %w", err)
+	}
+	return nil
+}
+
+// EnableTwoFA flips twofa_status on for the user, after the caller has
+// verified a token against the just-prepared secret.
+func (s Store) EnableTwoFA(ctx context.Context, userID int64) error {
+	_, err := s.DB.Exec(ctx, `UPDATE users SET twofa_status = true, updated_at = now() WHERE id = $1`, userID)
+	if err != nil {
+		return fmt.Errorf("enable 2fa: %w", err)
+	}
+	return nil
+}
+
+// DisableTwoFA flips twofa_status off. The secret is left in place (as
+// Kuma does) rather than cleared, so re-enabling later is simple; it is
+// inert while twofa_status is false.
+func (s Store) DisableTwoFA(ctx context.Context, userID int64) error {
+	_, err := s.DB.Exec(ctx, `UPDATE users SET twofa_status = false, updated_at = now() WHERE id = $1`, userID)
+	if err != nil {
+		return fmt.Errorf("disable 2fa: %w", err)
+	}
+	return nil
+}
+
+// SetTwoFALastToken records the most recently accepted TOTP token, used to
+// reject an immediate replay of the same token within its validity window.
+func (s Store) SetTwoFALastToken(ctx context.Context, userID int64, token string) error {
+	_, err := s.DB.Exec(ctx, `UPDATE users SET twofa_last_token = $1 WHERE id = $2`, token, userID)
+	if err != nil {
+		return fmt.Errorf("set twofa last token: %w", err)
+	}
+	return nil
 }
 
 // CreateSession issues and persists a new session for the given user,
@@ -128,5 +195,54 @@ func (s Store) DeleteSession(ctx context.Context, token string) error {
 // periodically so the sessions table does not grow unbounded.
 func (s Store) PruneExpired(ctx context.Context) error {
 	_, err := s.DB.Exec(ctx, `DELETE FROM sessions WHERE expires_at <= now()`)
+	return err
+}
+
+// pendingTwoFATTL is how long a pending-2FA token (issued after a correct
+// password but before the TOTP step) remains valid.
+const pendingTwoFATTL = 5 * time.Minute
+
+// CreatePendingTwoFA issues a short-lived token identifying a user who has
+// passed the password step of login and now needs to submit a valid TOTP
+// token to receive a real session.
+func (s Store) CreatePendingTwoFA(ctx context.Context, userID int64) (token string, err error) {
+	token, err = NewToken()
+	if err != nil {
+		return "", err
+	}
+	_, err = s.DB.Exec(ctx, `
+		INSERT INTO twofa_pending (token_hash, user_id, expires_at)
+		VALUES ($1, $2, $3)`, HashToken(token), userID, time.Now().Add(pendingTwoFATTL))
+	if err != nil {
+		return "", fmt.Errorf("insert pending 2fa: %w", err)
+	}
+	return token, nil
+}
+
+// ResolvePendingTwoFA returns the user a pending-2FA token was issued for,
+// if it exists and has not expired. It does not consume the token.
+func (s Store) ResolvePendingTwoFA(ctx context.Context, token string) (User, error) {
+	var u User
+	err := s.DB.QueryRow(ctx, `
+		SELECT u.id, u.username, u.password_hash, u.must_change_password,
+		       u.twofa_secret, u.twofa_status, u.twofa_last_token
+		FROM twofa_pending p
+		JOIN users u ON u.id = p.user_id
+		WHERE p.token_hash = $1 AND p.expires_at > now()`, HashToken(token)).
+		Scan(&u.ID, &u.Username, &u.PasswordHash, &u.MustChangePassword,
+			&u.TwoFASecret, &u.TwoFAStatus, &u.TwoFALastToken)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return User{}, errors.New("pending 2fa token not found or expired")
+	}
+	if err != nil {
+		return User{}, fmt.Errorf("lookup pending 2fa: %w", err)
+	}
+	return u, nil
+}
+
+// ConsumePendingTwoFA deletes a pending-2FA token so it cannot be reused,
+// whether the TOTP step succeeded or failed.
+func (s Store) ConsumePendingTwoFA(ctx context.Context, token string) error {
+	_, err := s.DB.Exec(ctx, `DELETE FROM twofa_pending WHERE token_hash = $1`, HashToken(token))
 	return err
 }

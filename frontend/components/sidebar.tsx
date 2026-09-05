@@ -27,6 +27,7 @@ import {
   Search,
   ChevronDown,
   LogOut,
+  ShieldCheck,
 } from "lucide-react";
 
 type NavItem = { name: string; href: string; icon: React.ComponentType<{ size?: number; strokeWidth?: number }> };
@@ -82,6 +83,12 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { name: "Status Pages", href: "/status-pages", icon: Gauge },
       { name: "Tags", href: "/tags", icon: TagIcon },
+    ],
+  },
+  {
+    label: "Account",
+    items: [
+      { name: "Settings", href: "/settings", icon: ShieldCheck },
     ],
   },
 ];

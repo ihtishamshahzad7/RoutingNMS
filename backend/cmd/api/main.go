@@ -15,6 +15,7 @@ import (
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/accesspoints"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/alerts"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/alertsfeed"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/apikeys"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/auth"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/customers"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/devices"
@@ -106,6 +107,12 @@ func main() {
 		}
 		cancel()
 		authHandler = auth.Handler{Store: authStore, Secure: strings.EqualFold(os.Getenv("COOKIE_SECURE"), "true")}
+		// Every Middleware/OptionalMiddleware call below shares this same
+		// authHandler value, so wiring API-key support here once makes it
+		// apply everywhere: a request carrying "Authorization: Bearer
+		// rns_<id>_<secret>" authenticates without a session cookie,
+		// falling back to the cookie when no such header is present.
+		authHandler = authHandler.WithAPIKey(apikeys.Repository{DB: db})
 		go pruneSessionsPeriodically(ctx, authStore)
 
 		// Syslog receiver: OLTs/routers/switches/CMTS can be pointed at this
@@ -228,8 +235,18 @@ func main() {
 
 	if db != nil {
 		mux.HandleFunc("POST /api/v1/auth/login", authHandler.Login)
+		mux.HandleFunc("POST /api/v1/auth/login/2fa", authHandler.LoginTwoFA)
 		mux.HandleFunc("POST /api/v1/auth/logout", authHandler.Logout)
 		mux.Handle("GET /api/v1/auth/me", authHandler.OptionalMiddleware(http.HandlerFunc(authHandler.Me)))
+		mux.Handle("POST /api/v1/auth/2fa/prepare", authHandler.Middleware(http.HandlerFunc(authHandler.PrepareTwoFA)))
+		mux.Handle("POST /api/v1/auth/2fa/save", authHandler.Middleware(http.HandlerFunc(authHandler.SaveTwoFA)))
+		mux.Handle("POST /api/v1/auth/2fa/disable", authHandler.Middleware(http.HandlerFunc(authHandler.DisableTwoFA)))
+
+		apiKeysHandler := apikeys.API{Repo: apikeys.Repository{DB: db}}
+		mux.Handle("GET /api/v1/auth/api-keys", authHandler.Middleware(apiKeysHandler))
+		mux.Handle("POST /api/v1/auth/api-keys", authHandler.Middleware(apiKeysHandler))
+		mux.Handle("PUT /api/v1/auth/api-keys/{id}", authHandler.Middleware(apiKeysHandler))
+		mux.Handle("DELETE /api/v1/auth/api-keys/{id}", authHandler.Middleware(apiKeysHandler))
 
 		deviceHandler := devices.Handler{Repo: devices.Repository{DB: db}}
 		discoveryHandler := devices.DiscoveryHandler{Repo: devices.Repository{DB: db}}
