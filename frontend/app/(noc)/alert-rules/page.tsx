@@ -290,6 +290,29 @@ const CHANNEL_FIELDS: Record<string, [string, string][]> = {
     ["device", "Device (optional)"],
     ["ttl", "TTL seconds (optional)"],
   ],
+  matrix: [
+    ["homeserver_url", "Matrix homeserver URL (e.g. https://matrix.org)"],
+    ["access_token", "Access token"],
+    ["room_id", "Room ID (e.g. !room:matrix.org)"],
+  ],
+  google_chat: [["webhook_url", "Google Chat incoming webhook URL"]],
+  mattermost: [
+    ["webhook_url", "Mattermost incoming webhook URL"],
+    ["username", "Username (optional, default RoutingNMS)"],
+    ["channel", "Channel (optional)"],
+    ["icon_emoji", "Icon emoji (optional)"],
+    ["icon_url", "Icon URL (optional)"],
+  ],
+  opsgenie: [
+    ["api_key", "Opsgenie API key"],
+    ["region", "Region: us / eu (optional, default us)"],
+    ["priority", "Priority 1-5 (optional, default 3)"],
+  ],
+  signal: [
+    ["signal_url", "signal-cli-rest-api URL"],
+    ["number", "Sender number"],
+    ["recipients", "Recipients, comma-separated"],
+  ],
 };
 
 function ChannelForm({ onSaved }: { onSaved: () => void }) {
@@ -317,7 +340,7 @@ function ChannelForm({ onSaved }: { onSaved: () => void }) {
       <div className="flex flex-wrap gap-3">
         <input className="input" placeholder="Channel name" value={name} onChange={e => setName(e.target.value)} />
         <select className="input" value={type} onChange={e => changeType(e.target.value)}>
-          {["webhook", "slack", "email", "pagerduty", "telegram", "whatsapp", "discord", "teams", "ntfy", "gotify", "pushover"].map(t => <option key={t} value={t}>{t}</option>)}
+          {["webhook", "slack", "email", "pagerduty", "telegram", "whatsapp", "discord", "teams", "ntfy", "gotify", "pushover", "matrix", "google_chat", "mattermost", "opsgenie", "signal"].map(t => <option key={t} value={t}>{t}</option>)}
         </select>
         {required.map(([key, placeholder]) => (
           <input

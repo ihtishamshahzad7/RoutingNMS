@@ -3,9 +3,11 @@ package alerts
 import (
 	"bytes"
 	"context"
+	crand "crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/smtp"
@@ -78,6 +80,16 @@ func (n Notifier) dispatch(client *http.Client, ch PersistedChannel, title, body
 		err = sendGotify(ctx, client, ch, message)
 	case "pushover":
 		err = sendPushover(ctx, client, ch, message)
+	case "matrix":
+		err = sendMatrix(ctx, client, ch, message)
+	case "google_chat":
+		err = sendGoogleChat(ctx, client, ch, title, message, severity)
+	case "mattermost":
+		err = sendMattermost(ctx, client, ch, title, message, severity)
+	case "opsgenie":
+		err = sendOpsgenie(ctx, client, ch, title, message, severity)
+	case "signal":
+		err = sendSignal(ctx, client, ch, message)
 	default:
 		err = fmt.Errorf("unsupported channel type %q", ch.ChannelType)
 	}
@@ -403,6 +415,212 @@ func sendPushover(ctx context.Context, client *http.Client, ch PersistedChannel,
 		return err
 	}
 	return postJSON(ctx, client, "https://api.pushover.net/1/messages.json", bodyBytes, nil)
+}
+
+// sendMatrix delivers to a Matrix room via the client-server API, ported
+// from Uptime Kuma's Matrix notification provider. Config: homeserver_url,
+// access_token, room_id.
+func sendMatrix(ctx context.Context, client *http.Client, ch PersistedChannel, message string) error {
+	homeserverURL := strings.TrimRight(cfgString(ch.Config, "homeserver_url", "url"), "/")
+	accessToken := cfgString(ch.Config, "access_token", "token")
+	roomID := cfgString(ch.Config, "room_id")
+	if homeserverURL == "" || accessToken == "" || roomID == "" {
+		return fmt.Errorf("homeserver_url, access_token and room_id are required")
+	}
+	txnID, err := matrixTxnID()
+	if err != nil {
+		return err
+	}
+	endpoint := fmt.Sprintf("%s/_matrix/client/r0/rooms/%s/send/m.room.message/%s",
+		homeserverURL, url.PathEscape(roomID), url.PathEscape(txnID))
+	bodyBytes, err := json.Marshal(map[string]any{"msgtype": "m.text", "body": message})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("matrix returned %s", resp.Status)
+	}
+	return nil
+}
+
+// matrixTxnID mirrors Kuma's transaction id generation: 20 random bytes,
+// base64-encoded and truncated to 20 characters, unique per request.
+func matrixTxnID() (string, error) {
+	buf := make([]byte, 20)
+	if _, err := io.ReadFull(crand.Reader, buf); err != nil {
+		return "", err
+	}
+	s := base64.StdEncoding.EncodeToString(buf)
+	if len(s) > 20 {
+		s = s[:20]
+	}
+	return s, nil
+}
+
+// sendGoogleChat posts to a Google Chat incoming webhook, ported from
+// Uptime Kuma's Google Chat notification provider. Config: webhook_url.
+func sendGoogleChat(ctx context.Context, client *http.Client, ch PersistedChannel, title, message, severity string) error {
+	webhookURL := cfgString(ch.Config, "webhook_url", "url")
+	if webhookURL == "" {
+		return fmt.Errorf("webhook_url is required")
+	}
+	down := severity != "resolved"
+	var prefix string
+	if down {
+		prefix = "\U0001F534 Application went down\n"
+	} else {
+		prefix = "✅ Application is back online\n"
+	}
+	text := fmt.Sprintf("%s*%s*\n%s", prefix, title, message)
+	// Note: Kuma also appends a link back to the monitor's page when a base
+	// URL setting is configured. RoutingNMS has no equivalent "public base
+	// URL" concept today, so that link is intentionally omitted.
+	bodyBytes, err := json.Marshal(map[string]any{"text": text})
+	if err != nil {
+		return err
+	}
+	return postJSON(ctx, client, webhookURL, bodyBytes, nil)
+}
+
+// sendMattermost posts to a Mattermost incoming webhook, ported from
+// Uptime Kuma's Mattermost notification provider. Config: webhook_url,
+// username (optional, default "RoutingNMS"), channel (optional),
+// icon_emoji (optional), icon_url (optional).
+func sendMattermost(ctx context.Context, client *http.Client, ch PersistedChannel, title, message, severity string) error {
+	webhookURL := cfgString(ch.Config, "webhook_url", "url")
+	if webhookURL == "" {
+		return fmt.Errorf("webhook_url is required")
+	}
+	down := severity != "resolved"
+	username := cfgString(ch.Config, "username")
+	if username == "" {
+		username = "RoutingNMS"
+	}
+	color := "#32CD32"
+	titleLine := fmt.Sprintf("%s service up!", title)
+	fallback := fmt.Sprintf("%s service up", title)
+	if down {
+		color = "#FF0000"
+		titleLine = fmt.Sprintf("%s service went down.", title)
+		fallback = fmt.Sprintf("%s service went down", title)
+	}
+	attachment := map[string]any{
+		"color":    color,
+		"title":    titleLine,
+		"fallback": fallback,
+		"fields": []map[string]any{
+			{"short": false, "title": "Error", "value": message},
+		},
+	}
+	payload := map[string]any{
+		"username":    username,
+		"attachments": []map[string]any{attachment},
+	}
+	if v := cfgString(ch.Config, "channel"); v != "" {
+		payload["channel"] = v
+	}
+	if v := cfgString(ch.Config, "icon_emoji"); v != "" {
+		payload["icon_emoji"] = v
+	}
+	if v := cfgString(ch.Config, "icon_url"); v != "" {
+		payload["icon_url"] = v
+	}
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return postJSON(ctx, client, webhookURL, bodyBytes, nil)
+}
+
+// sendOpsgenie creates (or, on a genuine recovery event, closes) an
+// Opsgenie alert, ported from Uptime Kuma's Opsgenie notification
+// provider. Config: api_key, region ("us" default or "eu"), priority
+// (1-5, default 3).
+//
+// RoutingNMS's alert evaluator (evaluator.go) only ever fires with
+// severity info/warning/critical -- it has no recovery-event notification
+// path today (the same pre-existing limitation the Teams/ntfy providers
+// already have), so the close-alert branch below is wired up per Kuma's
+// shape but is not reachable from the current evaluator.
+func sendOpsgenie(ctx context.Context, client *http.Client, ch PersistedChannel, title, message, severity string) error {
+	apiKey := cfgString(ch.Config, "api_key")
+	if apiKey == "" {
+		return fmt.Errorf("api_key is required")
+	}
+	alertsURL := "https://api.opsgenie.com/v2/alerts"
+	if cfgString(ch.Config, "region") == "eu" {
+		alertsURL = "https://api.eu.opsgenie.com/v2/alerts"
+	}
+	headers := map[string]string{"Authorization": "GenieKey " + apiKey}
+
+	if severity == "resolved" {
+		endpoint := fmt.Sprintf("%s/%s/close?identifierType=alias", alertsURL, url.PathEscape(title))
+		bodyBytes, err := json.Marshal(map[string]any{"source": "RoutingNMS"})
+		if err != nil {
+			return err
+		}
+		return postJSON(ctx, client, endpoint, bodyBytes, headers)
+	}
+
+	priority := cfgString(ch.Config, "priority")
+	if priority == "" {
+		priority = "3"
+	}
+	payload := map[string]any{
+		"message":     fmt.Sprintf("RoutingNMS Alert: %s", title),
+		"alias":       title,
+		"description": message,
+		"source":      "RoutingNMS",
+		"priority":    "P" + priority,
+	}
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return postJSON(ctx, client, alertsURL, bodyBytes, headers)
+}
+
+// sendSignal posts to a self-hosted signal-cli-rest-api instance, ported
+// from Uptime Kuma's Signal notification provider. Config: signal_url,
+// number (the sender's registered number), recipients (comma-separated).
+func sendSignal(ctx context.Context, client *http.Client, ch PersistedChannel, message string) error {
+	signalURL := cfgString(ch.Config, "signal_url", "url")
+	number := cfgString(ch.Config, "number")
+	recipientsRaw := cfgString(ch.Config, "recipients")
+	if signalURL == "" || number == "" || recipientsRaw == "" {
+		return fmt.Errorf("signal_url, number and recipients are required")
+	}
+	var recipients []string
+	for _, r := range strings.Split(recipientsRaw, ",") {
+		r = strings.TrimSpace(r)
+		if r != "" {
+			recipients = append(recipients, r)
+		}
+	}
+	if len(recipients) == 0 {
+		return fmt.Errorf("recipients are required")
+	}
+	payload := map[string]any{
+		"message":    message,
+		"number":     number,
+		"recipients": recipients,
+	}
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return postJSON(ctx, client, signalURL, bodyBytes, nil)
 }
 
 func postJSON(ctx context.Context, client *http.Client, targetURL string, body []byte, headers map[string]string) error {
