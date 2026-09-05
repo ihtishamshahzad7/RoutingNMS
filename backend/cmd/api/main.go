@@ -15,7 +15,6 @@ import (
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/accesspoints"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/alerts"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/alertsfeed"
-	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/assistant"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/auth"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/customers"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/devices"
@@ -199,6 +198,7 @@ func main() {
 		mux.Handle("POST /api/v1/devices/test", authHandler.Middleware(http.HandlerFunc(devices.TestHandler{}.ServeHTTP)))
 		mux.Handle("PUT /api/v1/devices/", authHandler.Middleware(http.HandlerFunc(deviceHandler.UpdateSNMP)))
 		mux.Handle("PUT /api/v1/devices/{id}/http-check", authHandler.Middleware(http.HandlerFunc(deviceHandler.UpdateHTTPCheck)))
+		mux.Handle("PUT /api/v1/devices/{id}/icmp-check", authHandler.Middleware(http.HandlerFunc(deviceHandler.UpdateICMPCheck)))
 		mux.Handle("POST /api/v1/devices/", authHandler.Middleware(http.HandlerFunc(discoveryHandler.Discover)))
 		mux.Handle("GET /api/v1/devices/", authHandler.Middleware(http.HandlerFunc(discoveryHandler.Interfaces)))
 
@@ -432,12 +432,6 @@ func main() {
 		mux.Handle("PUT /api/v1/customers/{id}", authHandler.Middleware(customers.API{Repo: customersRepo}))
 		mux.Handle("DELETE /api/v1/customers/{id}", authHandler.Middleware(customers.API{Repo: customersRepo}))
 
-		// Sprint 4 — NOC AI assistant (Screen 5 chat widget): deterministic,
-		// backend-grounded answers built from the live active alert feed +
-		// durable AI incidents. No external model at runtime.
-		assistantRepo := assistant.Repository{DB: db}
-		mux.Handle("POST /api/v1/ai/assistant", authHandler.Middleware(assistant.API{Repo: assistantRepo}))
-
 	} else {
 		unavailable := func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -452,6 +446,7 @@ func main() {
 		mux.HandleFunc("POST /api/v1/devices/test", unavailable)
 		mux.HandleFunc("PUT /api/v1/devices/", unavailable)
 		mux.HandleFunc("PUT /api/v1/devices/{id}/http-check", unavailable)
+		mux.HandleFunc("PUT /api/v1/devices/{id}/icmp-check", unavailable)
 		mux.HandleFunc("POST /api/v1/devices/", unavailable)
 		mux.HandleFunc("GET /api/v1/devices/", unavailable)
 		mux.HandleFunc("GET /api/v1/olt/runtime", unavailable)
@@ -510,7 +505,6 @@ func main() {
 		mux.HandleFunc("GET /api/v1/tags/assignments", unavailable)
 		mux.HandleFunc("GET /api/v1/tag-assignments/{subjectType}/{subjectId}", unavailable)
 		mux.HandleFunc("PUT /api/v1/tag-assignments/{subjectType}/{subjectId}", unavailable)
-		mux.HandleFunc("POST /api/v1/ai/assistant", unavailable)
 	}
 
 	srv := &http.Server{Addr: ":" + port, Handler: securityHeaders(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}

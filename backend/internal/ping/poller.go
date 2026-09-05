@@ -28,16 +28,16 @@ import (
 
 // Result is the parsed outcome of a single ICMP probe.
 type Result struct {
-	Address     string   `json:"address"`
-	Reachable   bool     `json:"reachable"`
-	RTTMs       float64  `json:"rttMs"`
-	JitterMs    float64  `json:"jitterMs"`
-	LossPct     float64  `json:"lossPct"`
-	TTL         int      `json:"ttl"`
-	PacketSize  int      `json:"packetSize"`
-	Count       int      `json:"count"`
-	Error       string   `json:"error,omitempty"`
-	ProbedAt    time.Time `json:"probedAt"`
+	Address    string    `json:"address"`
+	Reachable  bool      `json:"reachable"`
+	RTTMs      float64   `json:"rttMs"`
+	JitterMs   float64   `json:"jitterMs"`
+	LossPct    float64   `json:"lossPct"`
+	TTL        int       `json:"ttl"`
+	PacketSize int       `json:"packetSize"`
+	Count      int       `json:"count"`
+	Error      string    `json:"error,omitempty"`
+	ProbedAt   time.Time `json:"probedAt"`
 }
 
 // Repository persists probe results and reads the set of ICMP-enabled devices.
@@ -64,6 +64,12 @@ type IcmpEnabledDevice struct {
 	IntervalSeconds int
 	PacketSize      int
 	Count           int
+	// Retries is the number of consecutive failed probe cycles required
+	// before the device is actually treated as down -- ported from Uptime
+	// Kuma's ping monitor "Retries" option, so one transient blip doesn't
+	// fire a false alarm. 1 (the default) fires immediately, matching the
+	// pre-existing behaviour.
+	Retries int
 }
 
 // ListIcmpEnabled returns every enabled device that has icmp_enabled=true.
@@ -71,7 +77,7 @@ func (r Repository) ListIcmpEnabled(ctx context.Context) ([]IcmpEnabledDevice, e
 	if r.DB == nil {
 		return nil, fmt.Errorf("ping repository is not initialized")
 	}
-	rows, err := r.DB.Query(ctx, `SELECT id,address,icmp_interval_seconds,icmp_packet_size,icmp_count
+	rows, err := r.DB.Query(ctx, `SELECT id,address,icmp_interval_seconds,icmp_packet_size,icmp_count,icmp_retries
 		FROM devices WHERE enabled=true AND icmp_enabled=true ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -80,8 +86,11 @@ func (r Repository) ListIcmpEnabled(ctx context.Context) ([]IcmpEnabledDevice, e
 	out := []IcmpEnabledDevice{}
 	for rows.Next() {
 		var d IcmpEnabledDevice
-		if err := rows.Scan(&d.ID, &d.Address, &d.IntervalSeconds, &d.PacketSize, &d.Count); err != nil {
+		if err := rows.Scan(&d.ID, &d.Address, &d.IntervalSeconds, &d.PacketSize, &d.Count, &d.Retries); err != nil {
 			return nil, err
+		}
+		if d.Retries <= 0 {
+			d.Retries = 1
 		}
 		out = append(out, d)
 	}
@@ -149,8 +158,9 @@ type Poller struct {
 	metrics metricsdb.Repository
 	probe   ProbeFunc
 
-	mu   sync.Mutex
-	live map[string]Result // device id -> most recent probe result
+	mu          sync.Mutex
+	live        map[string]Result // device id -> most recent probe result (gated by Retries, see gate)
+	consecFails map[string]int    // device id -> consecutive failed probe cycles since the last success
 }
 
 // ProbeFunc performs one ICMP probe and returns the parsed result. Swappable
@@ -159,7 +169,26 @@ type ProbeFunc func(ctx context.Context, device IcmpEnabledDevice) Result
 
 // New builds a poller; probe defaults to execPing.
 func New(repo Repository, metrics metricsdb.Repository) *Poller {
-	return &Poller{repo: repo, metrics: metrics, probe: ExecPing, live: map[string]Result{}}
+	return &Poller{repo: repo, metrics: metrics, probe: ExecPing, live: map[string]Result{}, consecFails: map[string]int{}}
+}
+
+// gate applies the "retries before down" rule (ported from Uptime Kuma's
+// ping monitor): a device isn't treated as down until `retries` consecutive
+// probe cycles have failed, so one transient blip doesn't fire a false
+// alarm. retries<=1 fires on the very first failure, identical to the
+// pre-existing (pre-retry) behaviour.
+func (p *Poller) gate(deviceID string, raw bool, retries int) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if raw {
+		p.consecFails[deviceID] = 0
+		return true
+	}
+	p.consecFails[deviceID]++
+	if retries <= 1 {
+		return false
+	}
+	return p.consecFails[deviceID] < retries
 }
 
 // SetProbe overrides the probe function (used by tests).
@@ -198,9 +227,8 @@ func (p *Poller) pollOnce(ctx context.Context) {
 		res := p.probe(probeCtx, d)
 		cancel()
 
-		p.mu.Lock()
-		p.live[d.ID] = res
-		p.mu.Unlock()
+		rawReachable := res.Reachable
+		gated := p.gate(d.ID, rawReachable, d.Retries)
 
 		did, err := strconv.ParseInt(d.ID, 10, 64)
 		if err != nil {
@@ -209,13 +237,20 @@ func (p *Poller) pollOnce(ctx context.Context) {
 		rtt := res.RTTMs
 		jitter := res.JitterMs
 		ttl := res.TTL
+		// ping_results keeps the raw per-probe outcome (for real history/
+		// debugging); the gated status below is what "counts" as down.
 		_ = p.repo.Store(ctx, ProbeResult{
 			DeviceID: did, ProbedAt: res.ProbedAt, RTTMs: &rtt, JitterMs: &jitter,
-			LossPct: res.LossPct, TTL: &ttl, Reachable: res.Reachable,
+			LossPct: res.LossPct, TTL: &ttl, Reachable: rawReachable,
 		})
 
+		res.Reachable = gated
+		p.mu.Lock()
+		p.live[d.ID] = res
+		p.mu.Unlock()
+
 		up := 0.0
-		if res.Reachable {
+		if gated {
 			up = 1
 		}
 		_ = p.metrics.RecordBatch(ctx, []metricsdb.Sample{

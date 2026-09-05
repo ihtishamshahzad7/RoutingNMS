@@ -11,27 +11,43 @@ import (
 type Repository struct{ DB *pgxpool.Pool }
 
 type Record struct {
-	ID                        string `json:"id"`
-	OrganizationID            string `json:"organizationId"`
-	Name                      string `json:"name"`
-	Address                   string `json:"address"`
-	DeviceType                string `json:"deviceType"`
-	Vendor                    string `json:"vendor,omitempty"`
-	Model                     string `json:"model,omitempty"`
-	SerialNumber              string `json:"serialNumber,omitempty"`
-	Enabled                   bool   `json:"enabled"`
-	MonitoringIntervalSeconds int    `json:"monitoringIntervalSeconds"`
-	SNMPEnabled               bool   `json:"snmpEnabled"`
-	SNMPVersion               string `json:"snmpVersion"`
-	SNMPPort                  int    `json:"snmpPort"`
-	SNMPConfigured            bool   `json:"snmpConfigured"`
-	ProvisioningTemplateID    *int64 `json:"provisioningTemplateId,omitempty"`
+	ID                        string     `json:"id"`
+	OrganizationID            string     `json:"organizationId"`
+	Name                      string     `json:"name"`
+	Address                   string     `json:"address"`
+	DeviceType                string     `json:"deviceType"`
+	Vendor                    string     `json:"vendor,omitempty"`
+	Model                     string     `json:"model,omitempty"`
+	SerialNumber              string     `json:"serialNumber,omitempty"`
+	Enabled                   bool       `json:"enabled"`
+	MonitoringIntervalSeconds int        `json:"monitoringIntervalSeconds"`
+	SNMPEnabled               bool       `json:"snmpEnabled"`
+	SNMPVersion               string     `json:"snmpVersion"`
+	SNMPPort                  int        `json:"snmpPort"`
+	SNMPConfigured            bool       `json:"snmpConfigured"`
+	ProvisioningTemplateID    *int64     `json:"provisioningTemplateId,omitempty"`
 	LastProvisionedAt         *time.Time `json:"lastProvisionedAt,omitempty"`
-	HTTPCheckEnabled          bool   `json:"httpCheckEnabled"`
-	HTTPURL                   string `json:"httpUrl,omitempty"`
-	HTTPExpectedStatus        int    `json:"httpExpectedStatus"`
-	HTTPKeyword               string `json:"httpKeyword,omitempty"`
-	HTTPTimeoutMS             int    `json:"httpTimeoutMs"`
+	HTTPCheckEnabled          bool       `json:"httpCheckEnabled"`
+	HTTPURL                   string     `json:"httpUrl,omitempty"`
+	HTTPExpectedStatus        int        `json:"httpExpectedStatus"`
+	HTTPKeyword               string     `json:"httpKeyword,omitempty"`
+	HTTPTimeoutMS             int        `json:"httpTimeoutMs"`
+	ICMPEnabled               bool       `json:"icmpEnabled"`
+	ICMPIntervalSeconds       int        `json:"icmpIntervalSeconds"`
+	ICMPPacketSize            int        `json:"icmpPacketSize"`
+	ICMPCount                 int        `json:"icmpCount"`
+	ICMPRetries               int        `json:"icmpRetries"`
+}
+
+// ICMPCheckRequest configures the dedicated ICMP ping poller (internal/ping)
+// on a device -- interval/packet size/probe count/retries, mirroring the
+// per-monitor options Uptime Kuma's ping monitor exposes.
+type ICMPCheckRequest struct {
+	Enabled         bool `json:"enabled"`
+	IntervalSeconds int  `json:"intervalSeconds"`
+	PacketSize      int  `json:"packetSize"`
+	Count           int  `json:"count"`
+	Retries         int  `json:"retries"`
 }
 
 // HTTPCheckRequest configures the optional HTTP(S)+keyword monitor on a
@@ -65,7 +81,7 @@ func (r Repository) List(ctx context.Context, organizationID string) ([]Record, 
 	if r.DB == nil {
 		return nil, fmt.Errorf("device repository is not initialized")
 	}
-	rows, err := r.DB.Query(ctx, `SELECT id,organization_id,name,address,device_type,vendor,model,serial_number,enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port,http_check_enabled,http_url,http_expected_status,http_keyword,http_timeout_ms FROM devices WHERE organization_id=$1 ORDER BY name`, organizationID)
+	rows, err := r.DB.Query(ctx, `SELECT id,organization_id,name,address,device_type,vendor,model,serial_number,enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port,http_check_enabled,http_url,http_expected_status,http_keyword,http_timeout_ms,icmp_enabled,icmp_interval_seconds,icmp_packet_size,icmp_count,icmp_retries FROM devices WHERE organization_id=$1 ORDER BY name`, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +89,7 @@ func (r Repository) List(ctx context.Context, organizationID string) ([]Record, 
 	items := []Record{}
 	for rows.Next() {
 		var d Record
-		if err := rows.Scan(&d.ID, &d.OrganizationID, &d.Name, &d.Address, &d.DeviceType, &d.Vendor, &d.Model, &d.SerialNumber, &d.Enabled, &d.MonitoringIntervalSeconds, &d.SNMPEnabled, &d.SNMPVersion, &d.SNMPPort, &d.HTTPCheckEnabled, &d.HTTPURL, &d.HTTPExpectedStatus, &d.HTTPKeyword, &d.HTTPTimeoutMS); err != nil {
+		if err := rows.Scan(&d.ID, &d.OrganizationID, &d.Name, &d.Address, &d.DeviceType, &d.Vendor, &d.Model, &d.SerialNumber, &d.Enabled, &d.MonitoringIntervalSeconds, &d.SNMPEnabled, &d.SNMPVersion, &d.SNMPPort, &d.HTTPCheckEnabled, &d.HTTPURL, &d.HTTPExpectedStatus, &d.HTTPKeyword, &d.HTTPTimeoutMS, &d.ICMPEnabled, &d.ICMPIntervalSeconds, &d.ICMPPacketSize, &d.ICMPCount, &d.ICMPRetries); err != nil {
 			return nil, err
 		}
 		d.SNMPConfigured = d.SNMPEnabled
@@ -89,7 +105,7 @@ func (r Repository) ListAllEnabled(ctx context.Context) ([]Record, error) {
 	if r.DB == nil {
 		return nil, fmt.Errorf("device repository is not initialized")
 	}
-	rows, err := r.DB.Query(ctx, `SELECT id,organization_id,name,address,device_type,vendor,model,serial_number,enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port,http_check_enabled,http_url,http_expected_status,http_keyword,http_timeout_ms FROM devices WHERE enabled=true ORDER BY name`)
+	rows, err := r.DB.Query(ctx, `SELECT id,organization_id,name,address,device_type,vendor,model,serial_number,enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port,http_check_enabled,http_url,http_expected_status,http_keyword,http_timeout_ms,icmp_enabled,icmp_interval_seconds,icmp_packet_size,icmp_count,icmp_retries FROM devices WHERE enabled=true ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +113,7 @@ func (r Repository) ListAllEnabled(ctx context.Context) ([]Record, error) {
 	items := []Record{}
 	for rows.Next() {
 		var d Record
-		if err := rows.Scan(&d.ID, &d.OrganizationID, &d.Name, &d.Address, &d.DeviceType, &d.Vendor, &d.Model, &d.SerialNumber, &d.Enabled, &d.MonitoringIntervalSeconds, &d.SNMPEnabled, &d.SNMPVersion, &d.SNMPPort, &d.HTTPCheckEnabled, &d.HTTPURL, &d.HTTPExpectedStatus, &d.HTTPKeyword, &d.HTTPTimeoutMS); err != nil {
+		if err := rows.Scan(&d.ID, &d.OrganizationID, &d.Name, &d.Address, &d.DeviceType, &d.Vendor, &d.Model, &d.SerialNumber, &d.Enabled, &d.MonitoringIntervalSeconds, &d.SNMPEnabled, &d.SNMPVersion, &d.SNMPPort, &d.HTTPCheckEnabled, &d.HTTPURL, &d.HTTPExpectedStatus, &d.HTTPKeyword, &d.HTTPTimeoutMS, &d.ICMPEnabled, &d.ICMPIntervalSeconds, &d.ICMPPacketSize, &d.ICMPCount, &d.ICMPRetries); err != nil {
 			return nil, err
 		}
 		d.SNMPConfigured = d.SNMPEnabled
@@ -120,6 +136,30 @@ func (r Repository) UpdateHTTPCheck(ctx context.Context, id string, req HTTPChec
 	}
 	_, err := r.DB.Exec(ctx, `UPDATE devices SET http_check_enabled=$2,http_url=$3,http_expected_status=$4,http_keyword=$5,http_timeout_ms=$6,updated_at=NOW() WHERE id=$1`,
 		id, req.Enabled, req.URL, req.ExpectedStatus, req.Keyword, req.TimeoutMS)
+	return err
+}
+
+// UpdateICMPCheck configures the dedicated ICMP ping poller for a device --
+// interval/packet size/count/retries. Retries=0 is coerced up to 1 (fire
+// immediately) rather than treated as "never down".
+func (r Repository) UpdateICMPCheck(ctx context.Context, id string, req ICMPCheckRequest) error {
+	if r.DB == nil {
+		return fmt.Errorf("device repository is not initialized")
+	}
+	if req.IntervalSeconds < 5 {
+		req.IntervalSeconds = 30
+	}
+	if req.PacketSize <= 0 {
+		req.PacketSize = 56
+	}
+	if req.Count <= 0 {
+		req.Count = 3
+	}
+	if req.Retries <= 0 {
+		req.Retries = 1
+	}
+	_, err := r.DB.Exec(ctx, `UPDATE devices SET icmp_enabled=$2,icmp_interval_seconds=$3,icmp_packet_size=$4,icmp_count=$5,icmp_retries=$6,updated_at=NOW() WHERE id=$1`,
+		id, req.Enabled, req.IntervalSeconds, req.PacketSize, req.Count, req.Retries)
 	return err
 }
 
@@ -152,8 +192,8 @@ func (r Repository) GetByID(ctx context.Context, id string) (Record, error) {
 		return Record{}, fmt.Errorf("device repository is not initialized")
 	}
 	var d Record
-	err := r.DB.QueryRow(ctx, `SELECT id,organization_id,name,address,device_type,COALESCE(vendor,''),COALESCE(model,''),COALESCE(serial_number,''),enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port,provisioning_template_id,last_provisioned_at,http_check_enabled,http_url,http_expected_status,http_keyword,http_timeout_ms FROM devices WHERE id=$1`, id).
-		Scan(&d.ID, &d.OrganizationID, &d.Name, &d.Address, &d.DeviceType, &d.Vendor, &d.Model, &d.SerialNumber, &d.Enabled, &d.MonitoringIntervalSeconds, &d.SNMPEnabled, &d.SNMPVersion, &d.SNMPPort, &d.ProvisioningTemplateID, &d.LastProvisionedAt, &d.HTTPCheckEnabled, &d.HTTPURL, &d.HTTPExpectedStatus, &d.HTTPKeyword, &d.HTTPTimeoutMS)
+	err := r.DB.QueryRow(ctx, `SELECT id,organization_id,name,address,device_type,COALESCE(vendor,''),COALESCE(model,''),COALESCE(serial_number,''),enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port,provisioning_template_id,last_provisioned_at,http_check_enabled,http_url,http_expected_status,http_keyword,http_timeout_ms,icmp_enabled,icmp_interval_seconds,icmp_packet_size,icmp_count,icmp_retries FROM devices WHERE id=$1`, id).
+		Scan(&d.ID, &d.OrganizationID, &d.Name, &d.Address, &d.DeviceType, &d.Vendor, &d.Model, &d.SerialNumber, &d.Enabled, &d.MonitoringIntervalSeconds, &d.SNMPEnabled, &d.SNMPVersion, &d.SNMPPort, &d.ProvisioningTemplateID, &d.LastProvisionedAt, &d.HTTPCheckEnabled, &d.HTTPURL, &d.HTTPExpectedStatus, &d.HTTPKeyword, &d.HTTPTimeoutMS, &d.ICMPEnabled, &d.ICMPIntervalSeconds, &d.ICMPPacketSize, &d.ICMPCount, &d.ICMPRetries)
 	d.SNMPConfigured = d.SNMPEnabled
 	return d, err
 }
