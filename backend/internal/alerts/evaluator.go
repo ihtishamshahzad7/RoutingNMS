@@ -152,10 +152,16 @@ func evaluateImmediate(e *Evaluator, ctx context.Context, pr PersistedRule, rule
 
 		matched := matches(rule.Operator, engineSample.Value, rule.Threshold)
 		if !matched {
-			// Condition cleared: recover the alert if it was active.
+			// Condition cleared: recover the alert if it was active. Engine.Recover
+			// (keyed by rule.Key+DeviceID, same scoping as breachSince above) only
+			// returns recovered=true on the one tick where a previously-active
+			// alert transitions back to normal, so this fires exactly once per
+			// recovery -- never on subsequent healthy ticks.
 			e.clearBreach(breachKey)
-			if _, recovered := e.Engine.Recover(rule, engineSample); recovered {
+			if recoveredAlert, recovered := e.Engine.Recover(rule, engineSample); recovered {
 				log.Printf("alerts evaluator: recovered rule %s on device %s", rule.Key, deviceID)
+				recoveredAlert.Value = engineSample.Value // report the current (normal) value, not the original breach value
+				e.resolve(ctx, *recoveredAlert, pr)
 			}
 			continue
 		}
@@ -193,6 +199,29 @@ func (e *Evaluator) fire(ctx context.Context, alert Alert, pr PersistedRule) {
 		body += " (incident #" + strconv.FormatInt(durable.ID, 10) + ")"
 	}
 	e.Notifier.Notify(ctx, pr.NotificationChannelIDs, title, body, string(alert.Severity))
+}
+
+// resolve notifies the rule's channels that a previously-breaching condition
+// has returned to normal. This is the recovery counterpart to fire: same
+// channel fanout, same rule/device identity, but severity "resolved" so
+// providers with a dedicated recovery path (Teams, ntfy, Opsgenie's
+// close-alert call, Mattermost's up/down coloring, ...) render it as an
+// all-clear rather than a new breach. Deliberately does not open/close a
+// durable ai_incidents row -- that is a separate concern from channel
+// notification and out of scope here.
+func (e *Evaluator) resolve(ctx context.Context, alert Alert, pr PersistedRule) {
+	// title must match fire()'s title exactly: sendOpsgenie uses title as the
+	// alias to both create and close an Opsgenie alert, so a resolved
+	// notification with a different title would close the wrong (nonexistent)
+	// alias and leave the original alert open.
+	title := pr.Name + " breached"
+	if title == " breached" {
+		title = "Alert " + pr.RuleType + " breached"
+	}
+	body := "RESOLVED: Rule " + pr.Name + " (" + pr.RuleType + "): device " + alert.DeviceID +
+		" is back to normal (value " + strconv.FormatFloat(alert.Value, 'f', 2, 64) +
+		" vs threshold " + strconv.FormatFloat(alert.Threshold, 'f', 2, 64) + ")"
+	e.Notifier.Notify(ctx, pr.NotificationChannelIDs, title, body, "resolved")
 }
 
 // latestSamples returns the most recent sample per subject id for one metric

@@ -548,11 +548,10 @@ func sendMattermost(ctx context.Context, client *http.Client, ch PersistedChanne
 // provider. Config: api_key, region ("us" default or "eu"), priority
 // (1-5, default 3).
 //
-// RoutingNMS's alert evaluator (evaluator.go) only ever fires with
-// severity info/warning/critical -- it has no recovery-event notification
-// path today (the same pre-existing limitation the Teams/ntfy providers
-// already have), so the close-alert branch below is wired up per Kuma's
-// shape but is not reachable from the current evaluator.
+// The alert evaluator (evaluator.go, resolve()) calls Notify with
+// severity="resolved" when a previously-breaching rule condition returns to
+// normal, using the same title as the original breach notification so the
+// close call below targets the alias that create used.
 func sendOpsgenie(ctx context.Context, client *http.Client, ch PersistedChannel, title, message, severity string) error {
 	apiKey := cfgString(ch.Config, "api_key")
 	if apiKey == "" {
