@@ -23,6 +23,7 @@ import {
   Wrench,
   CalendarClock,
   Tag as TagIcon,
+  FolderTree,
   Gauge,
   Search,
   ChevronDown,
@@ -83,6 +84,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { name: "Status Pages", href: "/status-pages", icon: Gauge },
       { name: "Tags", href: "/tags", icon: TagIcon },
+      { name: "Device Groups", href: "/device-groups", icon: FolderTree },
     ],
   },
   {

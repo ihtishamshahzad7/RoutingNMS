@@ -22,6 +22,7 @@ import { apiFetch, ApiError } from "../../../lib/api";
 import { Card } from "../../../components/ui/card";
 import { StatusPill } from "../../../components/ui/status-pill";
 import { Sparkline } from "../../../components/ui/sparkline";
+import { groupSections, GroupSectionRows, DeviceGroup, GroupMember } from "../../../lib/device-groups";
 
 const ORG = "tenant-1";
 
@@ -307,6 +308,9 @@ export default function ReachabilityPage() {
   // Bumps every 30s to force PingCell/HttpCell/useRowState to re-fetch,
   // keeping the whole board "live" the way Kuma's monitor list is.
   const [tick, setTick] = useState(0);
+  const [groups, setGroups] = useState<DeviceGroup[]>([]);
+  const [memberOf, setMemberOf] = useState<Record<string, number>>({});
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
   async function load() {
     setLoading(true);
@@ -318,11 +322,33 @@ export default function ReachabilityPage() {
       setLoading(false);
     }
   }
-  useEffect(() => { load(); }, []);
+  async function loadGroups() {
+    try {
+      const [gs, ms] = await Promise.all([
+        apiFetch<DeviceGroup[]>(`/device-groups?tenantId=${ORG}`),
+        apiFetch<GroupMember[]>("/device-groups/members"),
+      ]);
+      setGroups(gs);
+      const map: Record<string, number> = {};
+      ms.filter((m) => m.subjectType === "device").forEach((m) => { map[m.subjectId] = m.groupId; });
+      setMemberOf(map);
+    } catch {
+      // Groups are a nice-to-have overlay on the board -- a failure here
+      // shouldn't block rendering live status.
+    }
+  }
+  useEffect(() => { load(); loadGroups(); }, []);
   useEffect(() => {
     const t = window.setInterval(() => setTick((n) => n + 1), 30000);
     return () => window.clearInterval(t);
   }, []);
+  function toggleGroupCollapsed(key: string) {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
 
   const filtered = useMemo(() => {
     let list = devices;
@@ -411,8 +437,14 @@ export default function ReachabilityPage() {
               {loading ? (
                 <tr><td colSpan={8} className="py-10 text-center text-[#8B949E]">Loading reachability board…</td></tr>
               ) : filtered.length ? (
-                filtered.map((d) => (
-                  <FilteredRow key={d.id} device={d} filter={filter} />
+                groupSections(filtered, groups, memberOf).map((section) => (
+                  <GroupSectionRows
+                    key={section.key}
+                    section={section}
+                    collapsed={collapsedGroups.has(section.key)}
+                    onToggle={() => toggleGroupCollapsed(section.key)}
+                    render={(d) => <FilteredRow key={d.id} device={d} filter={filter} />}
+                  />
                 ))
               ) : (
                 <tr><td colSpan={8} className="py-10 text-center text-[#8B949E]">No devices match.</td></tr>
