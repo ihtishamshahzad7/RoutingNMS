@@ -35,6 +35,8 @@ func (a API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch rest[0] {
+	case "presets":
+		a.handlePresets(w, r)
 	case "rules":
 		a.handleRules(w, r, rest[1:])
 	case "channels":
@@ -55,6 +57,16 @@ func indexOf(parts []string, want string) int {
 		}
 	}
 	return -1
+}
+
+// handlePresets serves the quick-preset catalog (GET /api/v1/alerts/presets)
+// so the frontend rule-creation form doesn't need to hardcode metric names.
+func (a API) handlePresets(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, Presets)
 }
 
 func (a API) handleRules(w http.ResponseWriter, r *http.Request, rest []string) {

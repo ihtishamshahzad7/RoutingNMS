@@ -13,6 +13,7 @@ import { Button } from "../../../components/ui/primitives";
 type RuleCondition = { metric?: string; operator?: string; threshold?: number; unit?: string };
 type Rule = { id: number; name: string; description: string; ruleType: string; condition: RuleCondition; severity: string; forDurationSec: number; cooldownSec: number; notificationChannelIds: number[]; deviceGroup: string; enabled: boolean; createdAt: string; updatedAt: string };
 type Channel = { id: number; name: string; tenantId?: string; channelType: string; config: Record<string, string>; enabled: boolean; createdAt: string };
+type Preset = { id: string; name: string; description: string; ruleType: string; metric: string; operator: string; threshold: number; unit?: string; severity: string };
 
 const TYPES = ["threshold", "icmp_loss", "icmp_rtt", "absence", "traps"];
 const SEVS = ["critical", "warning", "info"];
@@ -20,15 +21,17 @@ const SEVS = ["critical", "warning", "info"];
 export default function AlertRulesPage() {
   const [rules, setRules] = useState<Rule[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
+  const [presets, setPresets] = useState<Preset[]>([]);
   const [error, setError] = useState("");
 
   const load = async () => {
     try {
-      const [r, c] = await Promise.all([
+      const [r, c, p] = await Promise.all([
         apiFetch<Rule[]>("/alerts/rules"),
         apiFetch<Channel[]>("/alerts/channels"),
+        apiFetch<Preset[]>("/alerts/presets").catch(() => []),
       ]);
-      setRules(r); setChannels(c);
+      setRules(r); setChannels(c); setPresets(p);
     } catch { setError("Unable to load alert rules"); }
   };
   useEffect(() => { load(); }, []);
@@ -58,7 +61,7 @@ export default function AlertRulesPage() {
 
       {/* Rules */}
       <Card title={`Rules (${rules.length})`} className="mb-6">
-        <RuleForm channels={channels} onSaved={load} />
+        <RuleForm channels={channels} presets={presets} onSaved={load} />
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs text-[#C9D1D9]">
             <thead>
@@ -132,8 +135,9 @@ export default function AlertRulesPage() {
   );
 }
 
-function RuleForm({ channels, onSaved }: { channels: Channel[]; onSaved: () => void }) {
+function RuleForm({ channels, presets, onSaved }: { channels: Channel[]; presets: Preset[]; onSaved: () => void }) {
   const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
   const [ruleType, setRuleType] = useState("threshold");
   const [metric, setMetric] = useState("icmp_loss_pct");
   const [operator, setOperator] = useState(">");
@@ -145,13 +149,34 @@ function RuleForm({ channels, onSaved }: { channels: Channel[]; onSaved: () => v
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
 
+  // Quick presets: selecting one pre-fills + locks the condition fields
+  // below (metric/operator/threshold/type/severity) so a user doesn't have
+  // to already know the internal metric name. "Custom" (the default)
+  // reverts to the fully manual fields, unchanged from before presets
+  // existed -- nothing about the custom path is altered by this feature.
+  const [presetId, setPresetId] = useState("custom");
+  const applyPreset = (id: string) => {
+    setPresetId(id);
+    if (id === "custom") return;
+    const p = presets.find(x => x.id === id);
+    if (!p) return;
+    setRuleType(p.ruleType);
+    setMetric(p.metric);
+    setOperator(p.operator);
+    setThreshold(String(p.threshold));
+    setSeverity(p.severity);
+    if (!name) setName(p.name);
+    if (!description) setDescription(p.description);
+  };
+  const locked = presetId !== "custom";
+
   const submit = async () => {
     setSaving(true); setMsg("");
     try {
       await apiFetch("/alerts/rules", {
         method: "POST",
         body: JSON.stringify({
-          name, ruleType, severity,
+          name, description, ruleType, severity,
           forDurationSec: parseInt(forSec || "0", 10),
           cooldownSec: parseInt(cooldown || "300", 10),
           notificationChannelIds: channelIds,
@@ -159,7 +184,7 @@ function RuleForm({ channels, onSaved }: { channels: Channel[]; onSaved: () => v
           condition: { metric, operator, threshold: parseFloat(threshold || "0"), unit: "%" },
         }),
       });
-      setName(""); setMsg("Rule created"); onSaved();
+      setName(""); setDescription(""); setPresetId("custom"); setMsg("Rule created"); onSaved();
     } catch { setMsg("Failed to create rule"); }
     finally { setSaving(false); }
   };
@@ -167,13 +192,31 @@ function RuleForm({ channels, onSaved }: { channels: Channel[]; onSaved: () => v
   return (
     <div className="border-t border-[#21262D] p-5">
       <div className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-[#8B949E]">Create new rule</div>
+
+      {presets.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <span className="text-[10px] uppercase tracking-wider text-[#8B949E]">Quick preset</span>
+          <select className="input" value={presetId} onChange={e => applyPreset(e.target.value)}>
+            <option value="custom">Custom (advanced)</option>
+            {presets.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+          {presetId !== "custom" && (
+            <>
+              <span className="text-[10px] text-[#8B949E]">{presets.find(p => p.id === presetId)?.description}</span>
+              <Button variant="secondary" className="text-[10px] px-2 py-1" onClick={() => setPresetId("custom")}>Unlock / edit manually</Button>
+            </>
+          )}
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-3">
         <input className="input" placeholder="Rule name" value={name} onChange={e => setName(e.target.value)} />
-        <select className="input" value={ruleType} onChange={e => setRuleType(e.target.value)}>{TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select>
+        <input className="input min-w-[220px] flex-1" placeholder="Description (optional)" value={description} onChange={e => setDescription(e.target.value)} />
+        <select className="input" value={ruleType} disabled={locked} onChange={e => setRuleType(e.target.value)}>{TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select>
         {(ruleType === "threshold" || ruleType === "icmp_loss" || ruleType === "icmp_rtt") && <>
-          <input className="input font-mono" placeholder="metric" value={metric} onChange={e => setMetric(e.target.value)} />
-          <select className="input" value={operator} onChange={e => setOperator(e.target.value)}>{["=", ">", ">=", "<", "<="].map(o => <option key={o} value={o}>{o}</option>)}</select>
-          <input className="input font-mono" placeholder="threshold" value={threshold} onChange={e => setThreshold(e.target.value)} />
+          <input className="input font-mono" placeholder="metric" value={metric} disabled={locked} onChange={e => setMetric(e.target.value)} />
+          <select className="input" value={operator} disabled={locked} onChange={e => setOperator(e.target.value)}>{["=", ">", ">=", "<", "<="].map(o => <option key={o} value={o}>{o}</option>)}</select>
+          <input className="input font-mono" placeholder="threshold" value={threshold} disabled={locked} onChange={e => setThreshold(e.target.value)} />
         </>}
         <select className="input" value={severity} onChange={e => setSeverity(e.target.value)}>{SEVS.map(s => <option key={s} value={s}>{s}</option>)}</select>
         <input className="input w-24" placeholder="for (sec)" value={forSec} onChange={e => setForSec(e.target.value)} />
