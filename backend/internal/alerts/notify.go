@@ -3,12 +3,15 @@ package alerts
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	crand "crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"net/smtp"
 	"net/url"
@@ -110,6 +113,18 @@ func (n Notifier) dispatch(client *http.Client, ch PersistedChannel, title, body
 		err = sendFeishu(ctx, client, ch, title, body, severity)
 	case "home_assistant":
 		err = sendHomeAssistant(ctx, client, ch, title, message, severity)
+	case "rocket_chat":
+		err = sendRocketChat(ctx, client, ch, message, severity)
+	case "dingding":
+		err = sendDingDing(ctx, client, ch, title, message, severity)
+	case "kook":
+		err = sendKook(ctx, client, ch, message)
+	case "lunasea":
+		err = sendLunaSea(ctx, client, ch, title, message, severity)
+	case "serverchan":
+		err = sendServerChan(ctx, client, ch, title, body, severity)
+	case "goalert":
+		err = sendGoAlert(ctx, client, ch, message, severity)
 	default:
 		err = fmt.Errorf("unsupported channel type %q", ch.ChannelType)
 	}
@@ -995,6 +1010,227 @@ func sendHomeAssistant(ctx context.Context, client *http.Client, ch PersistedCha
 	endpoint := fmt.Sprintf("%s/api/services/notify/%s", baseURL, url.PathEscape(service))
 	headers := map[string]string{"Authorization": "Bearer " + token}
 	return postJSON(ctx, client, endpoint, bodyBytes, headers)
+}
+
+// sendRocketChat posts to a Rocket.Chat incoming webhook, ported from Uptime
+// Kuma's Rocket.Chat notification provider. Config: webhook_url, channel
+// (optional), username (optional), icon_emoji (optional).
+func sendRocketChat(ctx context.Context, client *http.Client, ch PersistedChannel, message, severity string) error {
+	webhookURL := cfgString(ch.Config, "webhook_url")
+	if webhookURL == "" {
+		return fmt.Errorf("webhook_url is required")
+	}
+	color := "#ff0000"
+	if severity == "resolved" {
+		color = "#32cd32"
+	}
+	attachment := map[string]any{
+		"title": "RoutingNMS Alert",
+		"text":  fmt.Sprintf("*Message*\n%s", message),
+		"color": color,
+	}
+	payload := map[string]any{
+		"text":        "RoutingNMS Alert",
+		"attachments": []map[string]any{attachment},
+	}
+	if v := cfgString(ch.Config, "channel"); v != "" {
+		payload["channel"] = v
+	}
+	if v := cfgString(ch.Config, "username"); v != "" {
+		payload["username"] = v
+	}
+	if v := cfgString(ch.Config, "icon_emoji"); v != "" {
+		payload["icon_emoji"] = v
+	}
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return postJSON(ctx, client, webhookURL, bodyBytes, nil)
+}
+
+// sendDingDing posts to a DingTalk custom robot webhook, ported from Uptime
+// Kuma's DingDing notification provider. Config: webhook_url, secret_key
+// (used to sign the request per DingTalk's HMAC-SHA256 scheme).
+func sendDingDing(ctx context.Context, client *http.Client, ch PersistedChannel, title, message, severity string) error {
+	webhookURL := cfgString(ch.Config, "webhook_url")
+	secretKey := cfgString(ch.Config, "secret_key")
+	if webhookURL == "" || secretKey == "" {
+		return fmt.Errorf("webhook_url and secret_key are required")
+	}
+	statusWord := "DOWN"
+	if severity == "resolved" {
+		statusWord = "UP"
+	}
+	payload := map[string]any{
+		"msgtype": "markdown",
+		"markdown": map[string]any{
+			"title": fmt.Sprintf("[%s] %s", statusWord, title),
+			"text":  fmt.Sprintf("## [%s] %s \n> %s", statusWord, title, message),
+		},
+	}
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	timestamp := strconv.FormatInt(time.Now().UnixMilli(), 10)
+	stringToSign := timestamp + "\n" + secretKey
+	mac := hmac.New(sha256.New, []byte(secretKey))
+	mac.Write([]byte(stringToSign))
+	sign := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+
+	endpoint := fmt.Sprintf("%s&timestamp=%s&sign=%s", webhookURL, timestamp, url.QueryEscape(sign))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("dingtalk returned %s", resp.Status)
+	}
+	var result struct {
+		ErrMsg string `json:"errmsg"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return fmt.Errorf("dingtalk: could not parse response: %w", err)
+	}
+	if result.ErrMsg != "ok" {
+		return fmt.Errorf("%s", result.ErrMsg)
+	}
+	return nil
+}
+
+// sendKook posts to the Kook (formerly Kaiheila) bot message API, ported
+// from Uptime Kuma's Kook notification provider. Config: bot_token,
+// guild_id (the target channel id).
+func sendKook(ctx context.Context, client *http.Client, ch PersistedChannel, message string) error {
+	botToken := cfgString(ch.Config, "bot_token")
+	guildID := cfgString(ch.Config, "guild_id")
+	if botToken == "" || guildID == "" {
+		return fmt.Errorf("bot_token and guild_id are required")
+	}
+	payload := map[string]any{
+		"target_id": guildID,
+		"content":   message,
+	}
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	headers := map[string]string{"Authorization": "Bot " + botToken}
+	return postJSON(ctx, client, "https://www.kookapp.cn/api/v3/message/create", bodyBytes, headers)
+}
+
+// sendLunaSea posts to a LunaSea custom notification target, ported from
+// Uptime Kuma's LunaSea notification provider. Config: target ("user" or
+// "device"), user_id (required when target is "user"), device_id (required
+// when target is "device").
+func sendLunaSea(ctx context.Context, client *http.Client, ch PersistedChannel, title, message, severity string) error {
+	target := cfgString(ch.Config, "target")
+	var endpoint string
+	switch target {
+	case "device":
+		deviceID := cfgString(ch.Config, "device_id")
+		if deviceID == "" {
+			return fmt.Errorf("device_id is required")
+		}
+		endpoint = fmt.Sprintf("https://notify.lunasea.app/v1/custom/device/%s", url.PathEscape(deviceID))
+	default:
+		userID := cfgString(ch.Config, "user_id")
+		if userID == "" {
+			return fmt.Errorf("user_id is required")
+		}
+		endpoint = fmt.Sprintf("https://notify.lunasea.app/v1/custom/user/%s", url.PathEscape(userID))
+	}
+	body := fmt.Sprintf("[🔴 Down] %s", message)
+	if severity == "resolved" {
+		body = fmt.Sprintf("[✅ Up] %s", message)
+	}
+	payload := map[string]any{
+		"title": fmt.Sprintf("RoutingNMS Alert: %s", title),
+		"body":  body,
+	}
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return postJSON(ctx, client, endpoint, bodyBytes, nil)
+}
+
+// sendServerChan posts to a ServerChan (Server酱) turbo endpoint, ported
+// from Uptime Kuma's ServerChan notification provider. Config: send_key.
+func sendServerChan(ctx context.Context, client *http.Client, ch PersistedChannel, title, body, severity string) error {
+	sendKey := cfgString(ch.Config, "send_key")
+	if sendKey == "" {
+		return fmt.Errorf("send_key is required")
+	}
+	subjectTitle := fmt.Sprintf("RoutingNMS Monitor Down %s", title)
+	if severity == "resolved" {
+		subjectTitle = fmt.Sprintf("RoutingNMS Monitor Up %s", title)
+	}
+	payload := map[string]any{
+		"title": subjectTitle,
+		"desp":  body,
+	}
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	endpoint := fmt.Sprintf("https://sctapi.ftqq.com/%s.send", url.PathEscape(sendKey))
+	return postJSON(ctx, client, endpoint, bodyBytes, nil)
+}
+
+// sendGoAlert posts a multipart/form-data request to a GoAlert generic
+// integration endpoint, ported from Uptime Kuma's GoAlert notification
+// provider. Config: base_url, token. Unlike every other provider above,
+// GoAlert's generic webhook expects multipart form fields rather than a
+// JSON body.
+func sendGoAlert(ctx context.Context, client *http.Client, ch PersistedChannel, message, severity string) error {
+	baseURL := strings.TrimRight(cfgString(ch.Config, "base_url"), "/")
+	token := cfgString(ch.Config, "token")
+	if baseURL == "" || token == "" {
+		return fmt.Errorf("base_url and token are required")
+	}
+
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	if err := writer.WriteField("summary", message); err != nil {
+		return err
+	}
+	if severity == "resolved" {
+		if err := writer.WriteField("action", "close"); err != nil {
+			return err
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return err
+	}
+
+	endpoint := fmt.Sprintf("%s/api/v2/generic/incoming?token=%s", baseURL, url.QueryEscape(token))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, &buf)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("goalert returned %s", resp.Status)
+	}
+	return nil
 }
 
 func postJSON(ctx context.Context, client *http.Client, targetURL string, body []byte, headers map[string]string) error {

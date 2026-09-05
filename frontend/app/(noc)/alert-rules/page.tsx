@@ -348,6 +348,30 @@ const CHANNEL_FIELDS: Record<string, [string, string][]> = {
     ["long_lived_token", "Long-lived access token"],
     ["notification_service", "Notification service (optional, default notify)"],
   ],
+  rocket_chat: [
+    ["webhook_url", "Rocket.Chat incoming webhook URL"],
+    ["channel", "Channel (optional)"],
+    ["username", "Username (optional)"],
+    ["icon_emoji", "Icon emoji (optional)"],
+  ],
+  dingding: [
+    ["webhook_url", "DingTalk custom robot webhook URL"],
+    ["secret_key", "Secret key (for HMAC-SHA256 signing)"],
+  ],
+  kook: [
+    ["bot_token", "Bot token"],
+    ["guild_id", "Channel (target) ID"],
+  ],
+  lunasea: [
+    ["target", "Target: user / device"],
+    ["user_id", "User ID (required if target is user)"],
+    ["device_id", "Device ID (required if target is device)"],
+  ],
+  serverchan: [["send_key", "ServerChan SendKey"]],
+  goalert: [
+    ["base_url", "GoAlert base URL"],
+    ["token", "Integration token"],
+  ],
 };
 
 function ChannelForm({ onSaved }: { onSaved: () => void }) {
@@ -375,7 +399,7 @@ function ChannelForm({ onSaved }: { onSaved: () => void }) {
       <div className="flex flex-wrap gap-3">
         <input className="input" placeholder="Channel name" value={name} onChange={e => setName(e.target.value)} />
         <select className="input" value={type} onChange={e => changeType(e.target.value)}>
-          {["webhook", "slack", "email", "pagerduty", "telegram", "whatsapp", "discord", "teams", "ntfy", "gotify", "pushover", "matrix", "google_chat", "mattermost", "opsgenie", "signal", "bark", "line", "alerta", "squadcast", "pagertree", "splunk", "stackfield", "wecom", "feishu", "home_assistant"].map(t => <option key={t} value={t}>{t}</option>)}
+          {["webhook", "slack", "email", "pagerduty", "telegram", "whatsapp", "discord", "teams", "ntfy", "gotify", "pushover", "matrix", "google_chat", "mattermost", "opsgenie", "signal", "bark", "line", "alerta", "squadcast", "pagertree", "splunk", "stackfield", "wecom", "feishu", "home_assistant", "rocket_chat", "dingding", "kook", "lunasea", "serverchan", "goalert"].map(t => <option key={t} value={t}>{t}</option>)}
         </select>
         {required.map(([key, placeholder]) => (
           <input
