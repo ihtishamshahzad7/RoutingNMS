@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { apiFetch, ApiError } from "../lib/api";
@@ -23,16 +23,20 @@ import {
   CalendarClock,
   Tag as TagIcon,
   Gauge,
+  Search,
+  ChevronDown,
+  LogOut,
 } from "lucide-react";
 
 type NavItem = { name: string; href: string; icon: React.ComponentType<{ size?: number; strokeWidth?: number }> };
 type NavGroup = { label: string; items: NavItem[] };
 
 /**
- * Grouped NOC navigation, modeled after Uptime Kuma's short, scannable nav:
- * a handful of clear sections instead of one long flat list. Every route
- * that previously had a sidebar entry still has one here — this is a
- * reorganization, not a feature removal.
+ * Accordion NOC navigation, modeled after Zabbix's collapsible sidebar:
+ * a search box on top, then top-level sections that expand one at a time,
+ * revealing their sub-items indented beneath. Every route that previously
+ * had a sidebar entry still has one here — this is a reorganization of the
+ * interaction model, not a feature removal.
  */
 const NAV_GROUPS: NavGroup[] = [
   {
@@ -80,11 +84,20 @@ const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
+function groupContainsPath(group: NavGroup, pathname: string) {
+  return group.items.some((item) => pathname === item.href || pathname.startsWith(item.href + "/"));
+}
+
 export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const [username, setUsername] = useState("");
   const [connected, setConnected] = useState(false);
+  const [query, setQuery] = useState("");
+  const [openGroup, setOpenGroup] = useState<string | null>(() => {
+    const active = NAV_GROUPS.find((g) => groupContainsPath(g, pathname));
+    return active ? active.label : NAV_GROUPS[0]?.label ?? null;
+  });
 
   useEffect(() => {
     let active = true;
@@ -114,6 +127,21 @@ export default function Sidebar() {
     finally { router.replace("/"); router.refresh(); }
   }
 
+  const trimmedQuery = query.trim().toLowerCase();
+  const isSearching = trimmedQuery.length > 0;
+
+  const filteredGroups = useMemo(() => {
+    if (!isSearching) return NAV_GROUPS;
+    return NAV_GROUPS.map((group) => ({
+      ...group,
+      items: group.items.filter((item) => item.name.toLowerCase().includes(trimmedQuery)),
+    })).filter((group) => group.items.length > 0);
+  }, [isSearching, trimmedQuery]);
+
+  function toggleGroup(label: string) {
+    setOpenGroup((prev) => (prev === label ? null : label));
+  }
+
   return (
     <aside className="flex h-screen w-64 shrink-0 flex-col border-r border-[#21262D] bg-[#161B22]">
       <div className="border-b border-[#21262D] px-5 py-5">
@@ -126,42 +154,79 @@ export default function Sidebar() {
         </div>
       </div>
 
-      <nav className="flex-1 space-y-4 overflow-y-auto px-3 py-4">
-        {NAV_GROUPS.map((group) => (
-          <div key={group.label}>
-            <div className="label px-2 pb-1.5 text-[#484F58]">{group.label}</div>
-            <div className="space-y-0.5">
-              {group.items.map((item) => {
-                const active = pathname === item.href || pathname.startsWith(item.href + "/");
-                const Icon = item.icon;
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={`flex items-center gap-2.5 rounded-[5px] px-3 py-2 text-sm transition-colors duration-100 ${
-                      active
-                        ? "bg-[#1C2128] text-[#58A6FF] border border-[#30363D]"
-                        : "text-[#8B949E] border border-transparent hover:bg-[#1C2128] hover:text-[#E6EDF3]"
-                    }`}
-                  >
-                    <Icon size={16} strokeWidth={2} />
-                    {item.name}
-                  </Link>
-                );
-              })}
+      <div className="px-3 pt-3">
+        <div className="flex items-center gap-2 rounded-[6px] border border-[#30363D] bg-[#0D1117] px-3 py-1.5 text-[#8B949E] focus-within:border-[#58A6FF]">
+          <Search size={14} strokeWidth={2} />
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search"
+            className="w-full bg-transparent text-sm text-[#E6EDF3] placeholder:text-[#484F58] focus:outline-none"
+          />
+        </div>
+      </div>
+
+      <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-3">
+        {filteredGroups.map((group) => {
+          const isActiveGroup = groupContainsPath(group, pathname);
+          const isOpen = isSearching || openGroup === group.label;
+          return (
+            <div key={group.label}>
+              <button
+                type="button"
+                onClick={() => toggleGroup(group.label)}
+                className={`flex w-full items-center justify-between rounded-[5px] px-3 py-2 text-sm font-medium transition-colors duration-100 ${
+                  isActiveGroup
+                    ? "bg-[#1C2128] text-[#58A6FF]"
+                    : "text-[#C9D1D9] hover:bg-[#1C2128] hover:text-[#E6EDF3]"
+                }`}
+              >
+                <span>{group.label}</span>
+                <ChevronDown
+                  size={14}
+                  strokeWidth={2}
+                  className={`shrink-0 transition-transform duration-150 ${isOpen ? "rotate-180" : ""}`}
+                />
+              </button>
+
+              {isOpen && (
+                <div className="mt-0.5 space-y-0.5 border-l border-[#21262D] pl-3">
+                  {group.items.map((item) => {
+                    const active = pathname === item.href || pathname.startsWith(item.href + "/");
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        className={`block rounded-[5px] px-3 py-1.5 text-[13px] transition-colors duration-100 ${
+                          active
+                            ? "bg-[#1C2128] font-semibold text-[#58A6FF]"
+                            : "text-[#8B949E] hover:bg-[#1C2128] hover:text-[#E6EDF3]"
+                        }`}
+                      >
+                        {item.name}
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
+        {isSearching && filteredGroups.length === 0 && (
+          <div className="px-3 py-2 text-xs text-[#484F58]">No matches</div>
+        )}
       </nav>
 
-      <div className="border-t border-[#21262D] px-4 py-4">
-        <div className="mb-3 truncate text-xs text-[#8B949E]">
-          {username ? <>Signed in as <span className="text-[#E6EDF3]">{username}</span></> : " "}
+      <div className="border-t border-[#21262D] px-3 py-3">
+        <div className="mb-2 truncate px-1 text-xs text-[#484F58]">
+          {username ? <>Signed in as <span className="text-[#8B949E]">{username}</span></> : " "}
         </div>
         <button
           onClick={logout}
-          className="w-full rounded-[5px] border border-[#30363D] bg-[#21262D] px-3 py-2 text-xs text-[#E6EDF3] transition-colors duration-100 hover:bg-[#1C2128]"
+          className="flex w-full items-center gap-2.5 rounded-[5px] px-3 py-1.5 text-[13px] text-[#8B949E] transition-colors duration-100 hover:bg-[#1C2128] hover:text-[#E6EDF3]"
         >
+          <LogOut size={14} strokeWidth={2} />
           Log out
         </button>
       </div>
