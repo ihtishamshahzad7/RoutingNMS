@@ -8,6 +8,7 @@ import { apiFetch, ApiError } from "../lib/api";
 const NAV = [
   { name: "Dashboard", href: "/dashboard", icon: "▦" },
   { name: "Devices", href: "/devices", icon: "▣" },
+  { name: "Reachability", href: "/reachability", icon: "◎" },
   { name: "OLTs", href: "/olts", icon: "◈" },
   { name: "Incidents", href: "/incidents", icon: "⚠" },
   { name: "Incident Hub", href: "/incident-hub", icon: "◉" },

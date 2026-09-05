@@ -90,7 +90,7 @@ export default function DeviceDetailsPage(){
   {pingState.live&&pingState.live.live?.error&&<div className="mt-3 text-xs text-amber-400">{pingState.live.live.error}</div>}
   <div className="mt-4"><PingSparkline results={pingState.live?.history??[]} /></div>
  </section>
- <section className={`mb-6 ${card}`}>
+ <section id="traceroute" className={`mb-6 ${card}`}>
   <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">Traceroute</h2><p className="mt-1 text-xs text-slate-500">On-demand hop-by-hop path trace to this device — an advanced diagnostic the previous monitoring setup never offered.</p></div><button onClick={runTraceroute} disabled={tracing} className="rounded-lg border border-cyan-700 bg-cyan-950/40 px-3 py-2 text-xs text-cyan-300 hover:bg-cyan-900/40 disabled:opacity-50">{tracing?"Tracing…":"Run traceroute"}</button></div>
   {traceError&&<div className="mt-3 text-xs text-red-400">{traceError}</div>}
   {trace&&<div className="mt-4 overflow-x-auto">
