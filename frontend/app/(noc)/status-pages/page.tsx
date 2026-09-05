@@ -1,8 +1,10 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import Link from "next/link";
 import { apiFetch, ApiError } from "../../../lib/api";
+import { Card } from "../../../components/ui/card";
+import { Button } from "../../../components/ui/primitives";
+import { PageHeader, Banner, Input, Textarea, Select, FieldLabel, Checkbox } from "../../../components/ui/form";
 
 type StatusPage = {
   id: number;
@@ -17,8 +19,6 @@ type Item = { id?: number; subjectType: "device" | "olt"; subjectId: string; lab
 type Device = { id: string; name: string; deviceType: string };
 type Olt = { id: string; name: string };
 
-const input = "mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm outline-none transition focus:border-cyan-500";
-const card = "rounded-2xl border border-slate-800 bg-slate-900 p-5";
 const ORG = "tenant-1";
 
 export default function StatusPagesAdmin() {
@@ -121,87 +121,87 @@ export default function StatusPagesAdmin() {
   }
 
   return (
-    <main className="mx-auto max-w-7xl px-6 py-8">
-      <div className="mb-8">
-        <div className="text-xs font-semibold tracking-[.2em] text-cyan-400">CUSTOMER-FACING</div>
-        <h1 className="mt-2 text-3xl font-bold">Status Pages</h1>
-        <p className="mt-2 max-w-3xl text-sm text-slate-400">
-          A branded, unauthenticated page showing current status for chosen devices/OLTs -- share the link with customers, or embed it on a support site. Ported from the previous monitoring setup.
-        </p>
-      </div>
-      {message && <div className="mb-5 rounded-lg border border-cyan-900 bg-cyan-950/40 px-4 py-3 text-sm text-cyan-200">{message}</div>}
+    <main className="mx-auto max-w-7xl px-6 py-6">
+      <PageHeader
+        eyebrow="Customer-facing"
+        title="Status Pages"
+        description="A branded, unauthenticated page showing current status for chosen devices/OLTs — share the link with customers, or embed it on a support site. Ported from the previous monitoring setup."
+      />
+      {message && <Banner>{message}</Banner>}
 
       {!editing ? (
-        <section className={card}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="font-semibold">Pages</h2>
+        <Card
+          title="Pages"
+          headerRight={
             <div className="flex gap-2">
-              <button onClick={load} className="rounded-lg border border-slate-700 px-3 py-2 text-xs hover:bg-slate-800">Refresh</button>
-              <button onClick={() => openEditor(null)} className="rounded-lg bg-cyan-600 px-3 py-2 text-xs font-semibold hover:bg-cyan-500">New status page</button>
+              <Button onClick={load}>Refresh</Button>
+              <Button variant="primary" onClick={() => openEditor(null)}>New status page</Button>
             </div>
-          </div>
-          <div className="mt-5 space-y-3">
+          }
+          className="p-4"
+        >
+          <div className="space-y-3">
             {loading ? (
-              <div className="py-8 text-center text-slate-500">Loading…</div>
+              <div className="py-8 text-center text-sm text-[#484F58]">Loading…</div>
             ) : pages.length ? (
               pages.map(p => (
-                <div key={p.id} className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950 p-4">
+                <div key={p.id} className="flex items-center justify-between rounded-[6px] border border-[#21262D] bg-[#0D1117] p-4">
                   <div>
-                    <div className="font-medium">{p.title}</div>
-                    <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
-                      <a href={`/status/${p.slug}`} target="_blank" rel="noreferrer" className="text-cyan-400 hover:underline">/status/{p.slug}</a>
-                      <span className={`rounded-full px-2 py-0.5 ${p.published ? "bg-emerald-950 text-emerald-300" : "bg-slate-800 text-slate-400"}`}>{p.published ? "Published" : "Unpublished"}</span>
+                    <div className="text-sm font-medium text-[#E6EDF3]">{p.title}</div>
+                    <div className="mt-1 flex items-center gap-2 text-xs text-[#8B949E]">
+                      <a href={`/status/${p.slug}`} target="_blank" rel="noreferrer" className="text-[#58A6FF] hover:underline">/status/{p.slug}</a>
+                      <span className={`rounded-full px-2 py-0.5 ${p.published ? "bg-[#12261E] text-[#3FB950]" : "bg-[#1C2128] text-[#8B949E]"}`}>{p.published ? "Published" : "Unpublished"}</span>
                     </div>
                   </div>
                   <div className="flex gap-2">
-                    <button onClick={() => openEditor(p)} className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs hover:bg-slate-800">Edit</button>
-                    <button onClick={() => remove(p)} className="rounded-lg border border-red-900 px-3 py-1.5 text-xs text-red-300 hover:bg-red-950/40">Delete</button>
+                    <Button onClick={() => openEditor(p)}>Edit</Button>
+                    <Button variant="danger" onClick={() => remove(p)}>Delete</Button>
                   </div>
                 </div>
               ))
             ) : (
-              <div className="py-8 text-center text-slate-500">No status pages yet.</div>
+              <div className="py-8 text-center text-sm text-[#484F58]">No status pages yet.</div>
             )}
           </div>
-        </section>
+        </Card>
       ) : (
-        <section className={card}>
-          <div className="mb-5 flex items-center justify-between">
-            <h2 className="font-semibold">{editing.id ? `Edit "${editing.title}"` : "New status page"}</h2>
-            <button onClick={() => setEditing(null)} className="text-slate-500 hover:text-white">✕</button>
-          </div>
+        <Card
+          title={editing.id ? `Edit "${editing.title}"` : "New status page"}
+          headerRight={<button onClick={() => setEditing(null)} className="text-[#8B949E] hover:text-[#E6EDF3]">✕</button>}
+          className="p-4"
+        >
           <form onSubmit={save} className="grid gap-4 sm:grid-cols-2">
-            <label className="text-sm text-slate-300">Title<input required name="title" defaultValue={editing.title} className={input} /></label>
-            <label className="text-sm text-slate-300">Slug (in the URL)<input required name="slug" defaultValue={editing.slug} placeholder="network-status" className={`${input} font-mono`} /></label>
-            <label className="sm:col-span-2 text-sm text-slate-300">Description<textarea name="description" defaultValue={editing.description} rows={2} className={input} /></label>
-            <label className="sm:col-span-2 text-sm text-slate-300">Footer text<input name="footerText" defaultValue={editing.footerText} className={input} /></label>
-            <label className="flex items-center gap-3 rounded-lg border border-slate-800 bg-slate-950 p-3 text-sm"><input name="published" type="checkbox" defaultChecked={editing.published} className="h-4 w-4" /><span>Published (publicly reachable)</span></label>
-            <label className="flex items-center gap-3 rounded-lg border border-slate-800 bg-slate-950 p-3 text-sm"><input name="showCertificateExpiry" type="checkbox" defaultChecked={editing.showCertificateExpiry} className="h-4 w-4" /><span>Show TLS cert expiry</span></label>
+            <FieldLabel>Title<Input required name="title" defaultValue={editing.title} /></FieldLabel>
+            <FieldLabel>Slug (in the URL)<Input required name="slug" defaultValue={editing.slug} placeholder="network-status" className="font-mono" /></FieldLabel>
+            <FieldLabel className="sm:col-span-2">Description<Textarea name="description" defaultValue={editing.description} rows={2} /></FieldLabel>
+            <FieldLabel className="sm:col-span-2">Footer text<Input name="footerText" defaultValue={editing.footerText} /></FieldLabel>
+            <label className="flex items-center gap-3 rounded-[6px] border border-[#21262D] bg-[#0D1117] p-3 text-sm text-[#C9D1D9]"><Checkbox name="published" defaultChecked={editing.published} /><span>Published (publicly reachable)</span></label>
+            <label className="flex items-center gap-3 rounded-[6px] border border-[#21262D] bg-[#0D1117] p-3 text-sm text-[#C9D1D9]"><Checkbox name="showCertificateExpiry" defaultChecked={editing.showCertificateExpiry} /><span>Show TLS cert expiry</span></label>
 
-            <div className="sm:col-span-2 border-t border-slate-800 pt-4">
-              <div className="mb-2 text-xs font-semibold text-cyan-400">MONITORS ON THIS PAGE</div>
+            <div className="sm:col-span-2 border-t border-[#21262D] pt-4">
+              <div className="mb-2 label text-[#58A6FF]">Monitors on this page</div>
               <div className="flex flex-wrap gap-3">
-                <select className={`${input} mt-0 w-auto`} onChange={e => { addItem("device", e.target.value); e.target.value = ""; }}>
+                <Select className="w-auto" onChange={e => { addItem("device", e.target.value); e.target.value = ""; }}>
                   <option value="">Add a device…</option>
                   {devices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                </select>
-                <select className={`${input} mt-0 w-auto`} onChange={e => { addItem("olt", e.target.value); e.target.value = ""; }}>
+                </Select>
+                <Select className="w-auto" onChange={e => { addItem("olt", e.target.value); e.target.value = ""; }}>
                   <option value="">Add an OLT…</option>
                   {olts.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-                </select>
+                </Select>
               </div>
               <div className="mt-3 space-y-2">
-                {items.length === 0 && <div className="text-xs text-slate-500">No monitors added yet.</div>}
+                {items.length === 0 && <div className="text-xs text-[#484F58]">No monitors added yet.</div>}
                 {items.map((it, idx) => (
-                  <div key={`${it.subjectType}-${it.subjectId}`} className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950 p-3 text-sm">
+                  <div key={`${it.subjectType}-${it.subjectId}`} className="flex items-center justify-between rounded-[6px] border border-[#21262D] bg-[#0D1117] p-3 text-sm text-[#C9D1D9]">
                     <span>
-                      <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] uppercase text-slate-400">{it.subjectType}</span>
+                      <span className="rounded bg-[#21262D] px-1.5 py-0.5 text-[10px] uppercase text-[#8B949E]">{it.subjectType}</span>
                       <span className="ml-2">{(it.subjectType === "device" ? devices.find(d => d.id === it.subjectId)?.name : olts.find(o => o.id === it.subjectId)?.name) ?? it.subjectId}</span>
                     </span>
                     <span className="flex gap-1">
-                      <button type="button" onClick={() => moveItem(idx, -1)} className="rounded border border-slate-700 px-2 py-1 text-xs hover:bg-slate-800">↑</button>
-                      <button type="button" onClick={() => moveItem(idx, 1)} className="rounded border border-slate-700 px-2 py-1 text-xs hover:bg-slate-800">↓</button>
-                      <button type="button" onClick={() => removeItem(idx)} className="rounded border border-red-900 px-2 py-1 text-xs text-red-300 hover:bg-red-950/40">Remove</button>
+                      <Button type="button" onClick={() => moveItem(idx, -1)}>↑</Button>
+                      <Button type="button" onClick={() => moveItem(idx, 1)}>↓</Button>
+                      <Button type="button" variant="danger" onClick={() => removeItem(idx)}>Remove</Button>
                     </span>
                   </div>
                 ))}
@@ -209,11 +209,11 @@ export default function StatusPagesAdmin() {
             </div>
 
             <div className="sm:col-span-2 flex gap-3">
-              <button type="button" onClick={() => setEditing(null)} className="flex-1 rounded-lg border border-slate-700 px-4 py-3 text-sm">Cancel</button>
-              <button disabled={saving} className="flex-1 rounded-lg bg-cyan-600 px-4 py-3 text-sm font-semibold hover:bg-cyan-500 disabled:opacity-50">{saving ? "Saving…" : "Save status page"}</button>
+              <Button type="button" onClick={() => setEditing(null)} className="flex-1 justify-center">Cancel</Button>
+              <Button variant="primary" disabled={saving} className="flex-1 justify-center">{saving ? "Saving…" : "Save status page"}</Button>
             </div>
           </form>
-        </section>
+        </Card>
       )}
     </main>
   );

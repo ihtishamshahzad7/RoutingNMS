@@ -2,6 +2,9 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { apiFetch, ApiError } from "../../../lib/api";
+import { Card } from "../../../components/ui/card";
+import { Button } from "../../../components/ui/primitives";
+import { PageHeader, Banner, Input, Textarea, Select, FieldLabel, Panel, Checkbox } from "../../../components/ui/form";
 
 type Window = {
   id: number;
@@ -21,8 +24,6 @@ type Device = { id: string; name: string };
 type Olt = { id: string; name: string };
 
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const input = "mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm outline-none transition focus:border-cyan-500";
-const card = "rounded-2xl border border-slate-800 bg-slate-900 p-5";
 const ORG = "tenant-1";
 
 function emptyWindow(): Window {
@@ -131,126 +132,126 @@ export default function MaintenanceWindowsAdmin() {
   }
 
   return (
-    <main className="mx-auto max-w-7xl px-6 py-8">
-      <div className="mb-8">
-        <div className="text-xs font-semibold tracking-[.2em] text-cyan-400">PLANNED DOWNTIME</div>
-        <h1 className="mt-2 text-3xl font-bold">Maintenance Windows</h1>
-        <p className="mt-2 max-w-3xl text-sm text-slate-400">
-          Suppress alerts for chosen devices/OLTs during planned downtime -- a scheduled truck roll or firmware upgrade won&apos;t page anyone. Ported from the previous monitoring setup&apos;s maintenance feature.
-        </p>
-      </div>
-      {message && <div className="mb-5 rounded-lg border border-cyan-900 bg-cyan-950/40 px-4 py-3 text-sm text-cyan-200">{message}</div>}
+    <main className="mx-auto max-w-7xl px-6 py-6">
+      <PageHeader
+        eyebrow="Planned downtime"
+        title="Maintenance Windows"
+        description="Suppress alerts for chosen devices/OLTs during planned downtime — a scheduled truck roll or firmware upgrade won't page anyone. Ported from the previous monitoring setup's maintenance feature."
+      />
+      {message && <Banner>{message}</Banner>}
 
       {!editing ? (
-        <section className={card}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="font-semibold">Windows</h2>
+        <Card
+          title="Windows"
+          headerRight={
             <div className="flex gap-2">
-              <button onClick={load} className="rounded-lg border border-slate-700 px-3 py-2 text-xs hover:bg-slate-800">Refresh</button>
-              <button onClick={() => openEditor(null)} className="rounded-lg bg-cyan-600 px-3 py-2 text-xs font-semibold hover:bg-cyan-500">New maintenance window</button>
+              <Button onClick={load}>Refresh</Button>
+              <Button variant="primary" onClick={() => openEditor(null)}>New maintenance window</Button>
             </div>
-          </div>
-          <div className="mt-5 space-y-3">
+          }
+          className="p-4"
+        >
+          <div className="space-y-3">
             {loading ? (
-              <div className="py-8 text-center text-slate-500">Loading…</div>
+              <div className="py-8 text-center text-sm text-[#484F58]">Loading…</div>
             ) : windows.length ? (
               windows.map(w => (
-                <div key={w.id} className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950 p-4">
+                <div key={w.id} className="flex items-center justify-between rounded-[6px] border border-[#21262D] bg-[#0D1117] p-4">
                   <div>
-                    <div className="font-medium">{w.title}</div>
-                    <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
-                      <span className="rounded bg-slate-800 px-1.5 py-0.5 uppercase">{w.strategy}</span>
+                    <div className="text-sm font-medium text-[#E6EDF3]">{w.title}</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-[#8B949E]">
+                      <span className="rounded bg-[#21262D] px-1.5 py-0.5 uppercase">{w.strategy}</span>
                       {w.strategy === "recurring" ? (
                         <span>{(w.daysOfWeek ?? []).map(d => DOW[d]).join(", ") || "no days"} at {w.startTimeOfDay ?? "--"} ({w.timezone}, {w.durationMinutes}m)</span>
                       ) : (
                         <span>{w.startsAt ? new Date(w.startsAt).toLocaleString() : "--"} → {w.endsAt ? new Date(w.endsAt).toLocaleString() : "--"}</span>
                       )}
-                      <span className={`rounded-full px-2 py-0.5 ${w.active ? "bg-emerald-950 text-emerald-300" : "bg-slate-800 text-slate-400"}`}>{w.active ? "Active" : "Disabled"}</span>
+                      <span className={`rounded-full px-2 py-0.5 ${w.active ? "bg-[#12261E] text-[#3FB950]" : "bg-[#1C2128] text-[#8B949E]"}`}>{w.active ? "Active" : "Disabled"}</span>
                     </div>
                   </div>
                   <div className="flex gap-2">
-                    <button onClick={() => openEditor(w)} className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs hover:bg-slate-800">Edit</button>
-                    <button onClick={() => remove(w)} className="rounded-lg border border-red-900 px-3 py-1.5 text-xs text-red-300 hover:bg-red-950/40">Delete</button>
+                    <Button onClick={() => openEditor(w)}>Edit</Button>
+                    <Button variant="danger" onClick={() => remove(w)}>Delete</Button>
                   </div>
                 </div>
               ))
             ) : (
-              <div className="py-8 text-center text-slate-500">No maintenance windows yet.</div>
+              <div className="py-8 text-center text-sm text-[#484F58]">No maintenance windows yet.</div>
             )}
           </div>
-        </section>
+        </Card>
       ) : (
-        <section className={card}>
-          <div className="mb-5 flex items-center justify-between">
-            <h2 className="font-semibold">{editing.id ? `Edit "${editing.title}"` : "New maintenance window"}</h2>
-            <button onClick={() => setEditing(null)} className="text-slate-500 hover:text-white">✕</button>
-          </div>
+        <Card
+          title={editing.id ? `Edit "${editing.title}"` : "New maintenance window"}
+          headerRight={<button onClick={() => setEditing(null)} className="text-[#8B949E] hover:text-[#E6EDF3]">✕</button>}
+          className="p-4"
+        >
           <form onSubmit={save} className="grid gap-4 sm:grid-cols-2">
-            <label className="text-sm text-slate-300">Title<input required name="title" defaultValue={editing.title} className={input} /></label>
-            <label className="text-sm text-slate-300">Strategy
-              <select name="strategy" defaultValue={editing.strategy} className={input} onChange={() => { /* re-render happens on save; both field sets are always in the form */ }}>
+            <FieldLabel>Title<Input required name="title" defaultValue={editing.title} /></FieldLabel>
+            <FieldLabel>Strategy
+              <Select name="strategy" defaultValue={editing.strategy}>
                 <option value="single">Single (one-off window)</option>
                 <option value="recurring">Recurring (weekly)</option>
-              </select>
-            </label>
-            <label className="sm:col-span-2 text-sm text-slate-300">Description<textarea name="description" defaultValue={editing.description} rows={2} className={input} /></label>
+              </Select>
+            </FieldLabel>
+            <FieldLabel className="sm:col-span-2">Description<Textarea name="description" defaultValue={editing.description} rows={2} /></FieldLabel>
 
-            <div className="sm:col-span-2 grid gap-4 sm:grid-cols-2 rounded-lg border border-slate-800 bg-slate-950 p-4">
-              <div className="sm:col-span-2 text-xs font-semibold text-cyan-400">SINGLE WINDOW (used when strategy = single)</div>
-              <label className="text-sm text-slate-300">Starts at<input type="datetime-local" name="startsAt" defaultValue={editing.startsAt ? editing.startsAt.slice(0, 16) : ""} className={input} /></label>
-              <label className="text-sm text-slate-300">Ends at<input type="datetime-local" name="endsAt" defaultValue={editing.endsAt ? editing.endsAt.slice(0, 16) : ""} className={input} /></label>
-            </div>
+            <Panel className="sm:col-span-2 grid gap-4 sm:grid-cols-2">
+              <div className="sm:col-span-2 label text-[#58A6FF]">Single window (used when strategy = single)</div>
+              <FieldLabel>Starts at<Input type="datetime-local" name="startsAt" defaultValue={editing.startsAt ? editing.startsAt.slice(0, 16) : ""} /></FieldLabel>
+              <FieldLabel>Ends at<Input type="datetime-local" name="endsAt" defaultValue={editing.endsAt ? editing.endsAt.slice(0, 16) : ""} /></FieldLabel>
+            </Panel>
 
-            <div className="sm:col-span-2 grid gap-4 rounded-lg border border-slate-800 bg-slate-950 p-4">
-              <div className="text-xs font-semibold text-cyan-400">RECURRING WINDOW (used when strategy = recurring)</div>
-              <div className="flex flex-wrap gap-3 text-sm text-slate-300">
+            <Panel className="sm:col-span-2 grid gap-4">
+              <div className="label text-[#58A6FF]">Recurring window (used when strategy = recurring)</div>
+              <div className="flex flex-wrap gap-3 text-sm text-[#C9D1D9]">
                 {DOW.map((d, i) => (
                   <label key={d} className="flex items-center gap-1.5">
-                    <input type="checkbox" name={`dow-${i}`} defaultChecked={(editing.daysOfWeek ?? []).includes(i)} className="h-4 w-4" />{d}
+                    <Checkbox name={`dow-${i}`} defaultChecked={(editing.daysOfWeek ?? []).includes(i)} />{d}
                   </label>
                 ))}
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
-                <label className="text-sm text-slate-300">Start time of day<input type="time" name="startTimeOfDay" defaultValue={editing.startTimeOfDay ?? "00:00"} className={input} /></label>
-                <label className="text-sm text-slate-300">Duration (minutes)<input type="number" min={1} name="durationMinutes" defaultValue={editing.durationMinutes} className={input} /></label>
-                <label className="text-sm text-slate-300">Timezone (IANA, e.g. America/New_York)<input name="timezone" defaultValue={editing.timezone} className={`${input} font-mono`} /></label>
+                <FieldLabel>Start time of day<Input type="time" name="startTimeOfDay" defaultValue={editing.startTimeOfDay ?? "00:00"} /></FieldLabel>
+                <FieldLabel>Duration (minutes)<Input type="number" min={1} name="durationMinutes" defaultValue={editing.durationMinutes} /></FieldLabel>
+                <FieldLabel>Timezone (IANA, e.g. America/New_York)<Input name="timezone" defaultValue={editing.timezone} className="font-mono" /></FieldLabel>
               </div>
-            </div>
+            </Panel>
 
-            <label className="flex items-center gap-3 rounded-lg border border-slate-800 bg-slate-950 p-3 text-sm"><input name="active" type="checkbox" defaultChecked={editing.active} className="h-4 w-4" /><span>Active (window is honored)</span></label>
+            <label className="flex items-center gap-3 rounded-[6px] border border-[#21262D] bg-[#0D1117] p-3 text-sm text-[#C9D1D9]"><Checkbox name="active" defaultChecked={editing.active} /><span>Active (window is honored)</span></label>
 
-            <div className="sm:col-span-2 border-t border-slate-800 pt-4">
-              <div className="mb-2 text-xs font-semibold text-cyan-400">DEVICES/OLTS COVERED BY THIS WINDOW</div>
+            <div className="sm:col-span-2 border-t border-[#21262D] pt-4">
+              <div className="mb-2 label text-[#58A6FF]">Devices/OLTs covered by this window</div>
               <div className="flex flex-wrap gap-3">
-                <select className={`${input} mt-0 w-auto`} onChange={e => { addItem("device", e.target.value); e.target.value = ""; }}>
+                <Select className="w-auto" onChange={e => { addItem("device", e.target.value); e.target.value = ""; }}>
                   <option value="">Add a device…</option>
                   {devices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                </select>
-                <select className={`${input} mt-0 w-auto`} onChange={e => { addItem("olt", e.target.value); e.target.value = ""; }}>
+                </Select>
+                <Select className="w-auto" onChange={e => { addItem("olt", e.target.value); e.target.value = ""; }}>
                   <option value="">Add an OLT…</option>
                   {olts.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-                </select>
+                </Select>
               </div>
               <div className="mt-3 space-y-2">
-                {items.length === 0 && <div className="text-xs text-slate-500">No devices/OLTs added yet -- this window won&apos;t suppress anything.</div>}
+                {items.length === 0 && <div className="text-xs text-[#484F58]">No devices/OLTs added yet — this window won&apos;t suppress anything.</div>}
                 {items.map((it, idx) => (
-                  <div key={`${it.subjectType}-${it.subjectId}`} className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950 p-3 text-sm">
+                  <div key={`${it.subjectType}-${it.subjectId}`} className="flex items-center justify-between rounded-[6px] border border-[#21262D] bg-[#0D1117] p-3 text-sm text-[#C9D1D9]">
                     <span>
-                      <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] uppercase text-slate-400">{it.subjectType}</span>
+                      <span className="rounded bg-[#21262D] px-1.5 py-0.5 text-[10px] uppercase text-[#8B949E]">{it.subjectType}</span>
                       <span className="ml-2">{(it.subjectType === "device" ? devices.find(d => d.id === it.subjectId)?.name : olts.find(o => o.id === it.subjectId)?.name) ?? it.subjectId}</span>
                     </span>
-                    <button type="button" onClick={() => removeItem(idx)} className="rounded border border-red-900 px-2 py-1 text-xs text-red-300 hover:bg-red-950/40">Remove</button>
+                    <Button type="button" variant="danger" onClick={() => removeItem(idx)}>Remove</Button>
                   </div>
                 ))}
               </div>
             </div>
 
             <div className="sm:col-span-2 flex gap-3">
-              <button type="button" onClick={() => setEditing(null)} className="flex-1 rounded-lg border border-slate-700 px-4 py-3 text-sm">Cancel</button>
-              <button disabled={saving} className="flex-1 rounded-lg bg-cyan-600 px-4 py-3 text-sm font-semibold hover:bg-cyan-500 disabled:opacity-50">{saving ? "Saving…" : "Save maintenance window"}</button>
+              <Button type="button" onClick={() => setEditing(null)} className="flex-1 justify-center">Cancel</Button>
+              <Button variant="primary" disabled={saving} className="flex-1 justify-center">{saving ? "Saving…" : "Save maintenance window"}</Button>
             </div>
           </form>
-        </section>
+        </Card>
       )}
     </main>
   );

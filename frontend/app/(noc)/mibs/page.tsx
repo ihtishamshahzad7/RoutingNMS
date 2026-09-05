@@ -127,27 +127,27 @@ export default function MIBsPage() {
   return (
     <main className="mx-auto max-w-7xl px-6 py-8">
       <div className="mb-8">
-        <div className="text-xs font-semibold tracking-widest text-cyan-400">LIVE NOC</div>
+        <div className="text-xs font-semibold tracking-widest text-[#58A6FF]">LIVE NOC</div>
         <h1 className="mt-2 text-3xl font-bold">MIB Manager</h1>
-        <p className="mt-2 text-sm text-slate-400">
+        <p className="mt-2 text-sm text-[#8B949E]">
           Upload vendor .mib/.my files to resolve raw OIDs into readable names across traps, alerts and this tester.
         </p>
       </div>
 
-      {error && <div className="mb-5 rounded-lg border border-red-900 bg-red-950/40 px-4 py-3 text-sm text-red-300">{error}</div>}
-      {message && <div className="mb-5 rounded-lg border border-emerald-900 bg-emerald-950/40 px-4 py-3 text-sm text-emerald-300">{message}</div>}
+      {error && <div className="mb-5 rounded-[6px] border border-[#672525] bg-[#2D1212] px-4 py-3 text-sm text-[#F78166]">{error}</div>}
+      {message && <div className="mb-5 rounded-[6px] border border-[#2EA043] bg-[#12261E]/40 px-4 py-3 text-sm text-[#3FB950]">{message}</div>}
 
-      <section className="mb-8 rounded-xl border border-slate-800 bg-slate-900">
-        <div className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
-          <h2 className="text-sm font-semibold text-slate-200">Loaded MIBs</h2>
-          <label className="cursor-pointer rounded border border-slate-700 px-3 py-1.5 text-xs hover:bg-slate-800">
+      <section className="mb-8 rounded-[8px] border border-[#21262D] bg-[#161B22]">
+        <div className="flex items-center justify-between border-b border-[#21262D] px-5 py-4">
+          <h2 className="text-sm font-semibold text-[#E6EDF3]">Loaded MIBs</h2>
+          <label className="cursor-pointer rounded border border-[#30363D] px-3 py-1.5 text-xs hover:bg-[#21262D]">
             {uploading ? "Uploading…" : "Upload MIB file"}
             <input type="file" accept=".mib,.my,.txt" className="hidden" onChange={onUpload} disabled={uploading} />
           </label>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
-            <thead className="border-b border-slate-800 text-xs text-slate-500">
+            <thead className="border-b border-[#21262D] text-xs text-[#8B949E]">
               <tr>
                 <th className="px-5 py-3">File</th>
                 <th className="px-5 py-3">Module</th>
@@ -158,21 +158,21 @@ export default function MIBsPage() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={5} className="px-5 py-6 text-center text-slate-500">Loading…</td></tr>
+                <tr><td colSpan={5} className="px-5 py-6 text-center text-[#8B949E]">Loading…</td></tr>
               ) : mibs.length ? mibs.map(m => (
-                <tr key={m.id} className="border-b border-slate-800/70">
+                <tr key={m.id} className="border-b border-[#21262D]">
                   <td className="px-5 py-3 font-mono text-xs">{m.filename}</td>
-                  <td className="px-5 py-3 text-xs text-slate-400">{m.moduleName || "—"}</td>
-                  <td className="px-5 py-3 text-xs text-slate-400">
-                    {m.objectCount}{m.skippedCount > 0 && <span className="text-amber-400"> ({m.skippedCount} skipped — dependency MIB missing?)</span>}
+                  <td className="px-5 py-3 text-xs text-[#8B949E]">{m.moduleName || "—"}</td>
+                  <td className="px-5 py-3 text-xs text-[#8B949E]">
+                    {m.objectCount}{m.skippedCount > 0 && <span className="text-[#D29922]"> ({m.skippedCount} skipped — dependency MIB missing?)</span>}
                   </td>
-                  <td className="px-5 py-3 text-xs text-slate-400">{new Date(m.uploadedAt).toLocaleString()}</td>
+                  <td className="px-5 py-3 text-xs text-[#8B949E]">{new Date(m.uploadedAt).toLocaleString()}</td>
                   <td className="px-5 py-3 text-right">
-                    <button onClick={() => deleteMib(m.id)} className="text-xs text-red-400 hover:text-red-300">Delete</button>
+                    <button onClick={() => deleteMib(m.id)} className="text-xs text-[#F78166] hover:text-[#F78166]">Delete</button>
                   </td>
                 </tr>
               )) : (
-                <tr><td colSpan={5} className="px-5 py-6 text-center text-slate-500">No MIBs uploaded yet.</td></tr>
+                <tr><td colSpan={5} className="px-5 py-6 text-center text-[#8B949E]">No MIBs uploaded yet.</td></tr>
               )}
             </tbody>
           </table>
@@ -180,35 +180,35 @@ export default function MIBsPage() {
       </section>
 
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
-        <section className="rounded-xl border border-slate-800 bg-slate-900 p-5">
-          <h2 className="mb-4 text-sm font-semibold text-slate-200">OID search</h2>
+        <section className="rounded-[8px] border border-[#21262D] bg-[#161B22] p-5">
+          <h2 className="mb-4 text-sm font-semibold text-[#E6EDF3]">OID search</h2>
           <form onSubmit={search} className="mb-4 flex gap-2">
             <input
               value={query}
               onChange={e => setQuery(e.target.value)}
               placeholder="Search by name or OID (e.g. sysDescr or 1.3.6.1.2.1.1.1)"
-              className="flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm"
+              className="flex-1 rounded-[6px] border border-[#30363D] bg-[#0D1117] px-3 py-2 text-sm"
             />
-            <button disabled={searching} className="rounded-lg bg-cyan-700 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-600 disabled:opacity-50">
+            <button disabled={searching} className="rounded-[6px] bg-[#238636] px-4 py-2 text-sm font-medium text-white hover:bg-[#238636] disabled:opacity-50">
               {searching ? "…" : "Search"}
             </button>
           </form>
           <div className="space-y-2">
             {results.map((r, i) => (
-              <div key={i} className="rounded-lg border border-slate-800 px-3 py-2 text-xs">
-                <div className="font-medium text-slate-200">{r.name}</div>
-                <div className="font-mono text-slate-400">{r.oid}</div>
-                <div className="text-slate-600">from {r.filename}</div>
+              <div key={i} className="rounded-[6px] border border-[#21262D] px-3 py-2 text-xs">
+                <div className="font-medium text-[#E6EDF3]">{r.name}</div>
+                <div className="font-mono text-[#8B949E]">{r.oid}</div>
+                <div className="text-[#8B949E]">from {r.filename}</div>
               </div>
             ))}
-            {!results.length && <div className="text-xs text-slate-500">No results yet — search above.</div>}
+            {!results.length && <div className="text-xs text-[#8B949E]">No results yet — search above.</div>}
           </div>
         </section>
 
-        <section className="rounded-xl border border-slate-800 bg-slate-900 p-5">
-          <h2 className="mb-4 text-sm font-semibold text-slate-200">Live OID tester</h2>
+        <section className="rounded-[8px] border border-[#21262D] bg-[#161B22] p-5">
+          <h2 className="mb-4 text-sm font-semibold text-[#E6EDF3]">Live OID tester</h2>
           <form onSubmit={runTest} className="space-y-3">
-            <select value={testDevice} onChange={e => setTestDevice(e.target.value)} required className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm">
+            <select value={testDevice} onChange={e => setTestDevice(e.target.value)} required className="w-full rounded-[6px] border border-[#30363D] bg-[#0D1117] px-3 py-2 text-sm">
               <option value="">Select a device…</option>
               {devices.map(d => <option key={d.id} value={d.id}>{d.name} ({d.address})</option>)}
             </select>
@@ -217,22 +217,22 @@ export default function MIBsPage() {
               onChange={e => setTestOID(e.target.value)}
               required
               placeholder="OID to fetch, e.g. 1.3.6.1.2.1.1.1.0"
-              className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-mono"
+              className="w-full rounded-[6px] border border-[#30363D] bg-[#0D1117] px-3 py-2 text-sm font-mono"
             />
-            <button disabled={testing} className="w-full rounded-lg bg-cyan-700 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-600 disabled:opacity-50">
+            <button disabled={testing} className="w-full rounded-[6px] bg-[#238636] px-4 py-2 text-sm font-medium text-white hover:bg-[#238636] disabled:opacity-50">
               {testing ? "Fetching…" : "Fetch value"}
             </button>
           </form>
           {testResult && (
-            <div className="mt-4 rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-3 text-xs">
-              <div className="text-slate-500">OID</div>
-              <div className="mb-2 font-mono text-slate-200">{testResult.oid}</div>
+            <div className="mt-4 rounded-[6px] border border-[#21262D] bg-[#0D1117]/60 px-3 py-3 text-xs">
+              <div className="text-[#8B949E]">OID</div>
+              <div className="mb-2 font-mono text-[#E6EDF3]">{testResult.oid}</div>
               {testResult.resolvedName && <>
-                <div className="text-slate-500">Resolved name</div>
-                <div className="mb-2 text-slate-200">{testResult.resolvedName}</div>
+                <div className="text-[#8B949E]">Resolved name</div>
+                <div className="mb-2 text-[#E6EDF3]">{testResult.resolvedName}</div>
               </>}
-              <div className="text-slate-500">Value</div>
-              <div className="font-mono text-slate-200">{String(testResult.value)}</div>
+              <div className="text-[#8B949E]">Value</div>
+              <div className="font-mono text-[#E6EDF3]">{String(testResult.value)}</div>
             </div>
           )}
         </section>

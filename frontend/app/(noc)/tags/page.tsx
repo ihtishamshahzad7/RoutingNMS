@@ -2,11 +2,12 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { apiFetch, ApiError } from "../../../lib/api";
+import { Card } from "../../../components/ui/card";
+import { Button } from "../../../components/ui/primitives";
+import { PageHeader, Banner, Input, FieldLabel } from "../../../components/ui/form";
 
 type Tag = { id: number; name: string; color: string };
 
-const input = "mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm outline-none transition focus:border-cyan-500";
-const card = "rounded-2xl border border-slate-800 bg-slate-900 p-5";
 const ORG = "tenant-1";
 const DEFAULT_COLOR = "#58A6FF";
 const SWATCHES = ["#58A6FF", "#3FB950", "#D29922", "#F85149", "#A371F7", "#8B949E", "#DB61A2"];
@@ -64,25 +65,23 @@ export default function TagsAdmin() {
   }
 
   return (
-    <main className="mx-auto max-w-4xl px-6 py-8">
-      <div className="mb-8">
-        <div className="text-xs font-semibold tracking-[.2em] text-cyan-400">ORGANIZE</div>
-        <h1 className="mt-2 text-3xl font-bold">Tags</h1>
-        <p className="mt-2 max-w-2xl text-sm text-slate-400">
-          Free-form, colored labels for devices and OLTs -- ported from the previous monitoring setup. Assign tags from a device&apos;s detail page.
-        </p>
-      </div>
-      {message && <div className="mb-5 rounded-lg border border-cyan-900 bg-cyan-950/40 px-4 py-3 text-sm text-cyan-200">{message}</div>}
+    <main className="mx-auto max-w-4xl px-6 py-6">
+      <PageHeader
+        eyebrow="Organize"
+        title="Tags"
+        description="Free-form, colored labels for devices and OLTs — ported from the previous monitoring setup. Assign tags from a device's detail page."
+      />
+      {message && <Banner>{message}</Banner>}
 
       {!editing ? (
-        <section className={card}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="font-semibold">All tags</h2>
-            <button onClick={() => setEditing({ id: 0, name: "", color: DEFAULT_COLOR })} className="rounded-lg bg-cyan-600 px-3 py-2 text-xs font-semibold hover:bg-cyan-500">New tag</button>
-          </div>
-          <div className="mt-5 flex flex-wrap gap-2">
+        <Card
+          title={`All tags (${tags.length})`}
+          headerRight={<Button variant="primary" onClick={() => setEditing({ id: 0, name: "", color: DEFAULT_COLOR })}>New tag</Button>}
+          className="p-4"
+        >
+          <div className="flex flex-wrap gap-2">
             {loading ? (
-              <div className="py-8 text-center text-slate-500">Loading…</div>
+              <div className="w-full py-8 text-center text-sm text-[#484F58]">Loading…</div>
             ) : tags.length ? (
               tags.map(t => (
                 <div key={t.id} className="flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium" style={{ borderColor: t.color, backgroundColor: `${t.color}22`, color: t.color }}>
@@ -92,20 +91,20 @@ export default function TagsAdmin() {
                 </div>
               ))
             ) : (
-              <div className="py-8 text-center text-slate-500">No tags yet.</div>
+              <div className="w-full py-8 text-center text-sm text-[#484F58]">No tags yet.</div>
             )}
           </div>
-        </section>
+        </Card>
       ) : (
-        <section className={card}>
-          <div className="mb-5 flex items-center justify-between">
-            <h2 className="font-semibold">{editing.id ? `Edit "${editing.name}"` : "New tag"}</h2>
-            <button onClick={() => setEditing(null)} className="text-slate-500 hover:text-white">✕</button>
-          </div>
+        <Card
+          title={editing.id ? `Edit "${editing.name}"` : "New tag"}
+          headerRight={<button onClick={() => setEditing(null)} className="text-[#8B949E] hover:text-[#E6EDF3]">✕</button>}
+          className="p-4"
+        >
           <form onSubmit={save} className="grid gap-4">
-            <label className="text-sm text-slate-300">Name<input required name="name" defaultValue={editing.name} placeholder="core, needs-firmware, customer-edge…" className={input} /></label>
+            <FieldLabel>Name<Input required name="name" defaultValue={editing.name} placeholder="core, needs-firmware, customer-edge…" /></FieldLabel>
             <div>
-              <div className="text-sm text-slate-300">Color</div>
+              <div className="text-sm text-[#8B949E]">Color</div>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 {SWATCHES.map(c => (
                   <label key={c} className="h-7 w-7 cursor-pointer rounded-full border-2" style={{ backgroundColor: c, borderColor: editing.color === c ? "#E6EDF3" : "transparent" }}>
@@ -115,11 +114,11 @@ export default function TagsAdmin() {
               </div>
             </div>
             <div className="flex gap-3">
-              <button type="button" onClick={() => setEditing(null)} className="flex-1 rounded-lg border border-slate-700 px-4 py-3 text-sm">Cancel</button>
-              <button disabled={saving} className="flex-1 rounded-lg bg-cyan-600 px-4 py-3 text-sm font-semibold hover:bg-cyan-500 disabled:opacity-50">{saving ? "Saving…" : "Save tag"}</button>
+              <Button type="button" onClick={() => setEditing(null)} className="flex-1 justify-center">Cancel</Button>
+              <Button variant="primary" disabled={saving} className="flex-1 justify-center">{saving ? "Saving…" : "Save tag"}</Button>
             </div>
           </form>
-        </section>
+        </Card>
       )}
     </main>
   );
