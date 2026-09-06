@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/maintenance"
 )
 
 // Repository is a thin read-only view over data other packages already own
@@ -58,6 +60,25 @@ func (r Repository) avgMetric(ctx context.Context, deviceID, metric string, sinc
 		return 0, false, err
 	}
 	return *avg, true, nil
+}
+
+// isPaused reports whether the device has monitoring paused (the
+// pause/resume feature -- devices.enabled=false). Queried directly against
+// the devices table rather than importing internal/devices, to avoid a
+// needless package dependency for one boolean column read.
+func (r Repository) isPaused(ctx context.Context, deviceID string) (paused bool, ok bool, err error) {
+	// devices.id is bigint, unlike the text-keyed polymorphic subject_id
+	// columns (metric_samples, status_page_items, maintenance_window_items)
+	// the rest of this package reads -- an explicit cast is required since
+	// pgx sends deviceID as a text-typed parameter. A deviceID that isn't a
+	// valid integer fails the cast, which is handled the same as "device
+	// missing": no data, not an error.
+	var enabled bool
+	err = r.DB.QueryRow(ctx, `SELECT enabled FROM devices WHERE id=$1::bigint`, deviceID).Scan(&enabled)
+	if err != nil {
+		return false, false, nil
+	}
+	return !enabled, true, nil
 }
 
 // uptimePct computes the uptime percentage over the trailing window from
@@ -129,7 +150,14 @@ func ParseDuration(s string, def time.Duration) (time.Duration, error) {
 // Kuma's real /api/badge/* routes, they're meant to be embedded on external
 // pages, so they authenticate purely via the public-status-page visibility
 // gate (IsPublic) instead of a session.
-type Handler struct{ Repo Repository }
+type Handler struct {
+	Repo Repository
+	// Maintenance answers whether a device is currently covered by an
+	// active maintenance window (see internal/maintenance.Checker). Nil is
+	// tolerated (badges just never reports the maintenance state), so
+	// existing test/wiring code that doesn't set it keeps working.
+	Maintenance maintenance.Checker
+}
 
 func (h Handler) writeSVG(w http.ResponseWriter, svg string) {
 	w.Header().Set("Content-Type", "image/svg+xml")
@@ -139,12 +167,30 @@ func (h Handler) writeSVG(w http.ResponseWriter, svg string) {
 	_, _ = w.Write([]byte(svg))
 }
 
+func styleParam(r *http.Request) string {
+	return r.URL.Query().Get("style")
+}
+
 // naBadge is what every route falls back to when the gate fails (device
 // missing, or not on a published status page) or the requested data simply
 // doesn't exist yet (e.g. no cert-expiry sample for a non-HTTPS device) —
 // always HTTP 200 with a grey "N/A" message, exactly like Kuma.
-func (h Handler) naBadge(w http.ResponseWriter, label string) {
-	h.writeSVG(w, Render(label, "N/A", ColorNA))
+func (h Handler) naBadge(w http.ResponseWriter, r *http.Request, label string) {
+	h.writeSVG(w, Render(label, "N/A", ColorNA, styleParam(r)))
+}
+
+// isUnderMaintenance reports whether the device is currently covered by an
+// active maintenance window, tolerating a zero-value Maintenance checker
+// (DB nil) by simply reporting false.
+func (h Handler) isUnderMaintenance(ctx context.Context, deviceID string) bool {
+	if h.Maintenance.DB == nil {
+		return false
+	}
+	active, err := h.Maintenance.ActiveSubjects(ctx)
+	if err != nil {
+		return false
+	}
+	return active["device:"+deviceID]
 }
 
 func labelParam(r *http.Request, def string) string {
@@ -171,33 +217,47 @@ func (h Handler) gate(ctx context.Context, deviceID string) bool {
 
 // Status serves GET /api/v1/badge/{deviceId}/status.
 //
-// Query params: label (default "Status"), upLabel/downLabel/pendingLabel/
-// maintenanceLabel (default "Up"/"Down"/"Pending"/"Maintenance"),
-// upColor/downColor/pendingColor/maintenanceColor (hex, `#` optional).
+// Query params: label (default "Status"), upLabel/downLabel/pausedLabel/
+// maintenanceLabel (default "Up"/"Down"/"Paused"/"Maintenance"),
+// upColor/downColor/pausedColor/maintenanceColor (hex, `#` optional), and
+// style (flat [default] / flat-square / plastic / for-the-badge).
 //
-// RoutingNMS's device model only tracks up/down reachability (the "up"
-// metric_samples series) — there is no persisted "pending" or "maintenance"
-// device state distinct from up/down today, so this always resolves to
-// "up", "down", or "N/A" (no recent sample). The pending/maintenance
-// labels+colors are still accepted and rendered if a caller explicitly
-// wants that vocabulary, but nothing in RoutingNMS currently produces those
-// states.
+// Resolution order, checked before falling back to the plain up/down value:
+// maintenance (the device is covered by an active maintenance window --
+// see internal/maintenance.Checker.ActiveSubjects) takes top priority, then
+// paused (the device has monitoring paused via the pause/resume feature --
+// devices.enabled=false), then the latest "up" metric_samples value, then
+// N/A if there's no recent sample at all. Kuma's own "pending" state (a
+// monitor whose first check hasn't completed, or that's mid-retry before
+// being marked down) has no direct equivalent in RoutingNMS's model today,
+// so it isn't produced here.
 func (h Handler) Status(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("deviceId")
 	label := labelParam(r, "Status")
 	if !h.gate(r.Context(), deviceID) {
-		h.naBadge(w, label)
+		h.naBadge(w, r, label)
+		return
+	}
+	// Maintenance and paused both take priority over the up/down value --
+	// mirrors Kuma's own badge, which never reports a stale "up"/"down"
+	// for a monitor that's under planned downtime or explicitly paused.
+	if h.isUnderMaintenance(r.Context(), deviceID) {
+		h.writeSVG(w, Render(label, queryParam(r, "maintenanceLabel", "Maintenance"), colorParam(r, "maintenanceColor", ColorMaintenance), styleParam(r)))
+		return
+	}
+	if paused, ok, err := h.Repo.isPaused(r.Context(), deviceID); err == nil && ok && paused {
+		h.writeSVG(w, Render(label, queryParam(r, "pausedLabel", "Paused"), colorParam(r, "pausedColor", ColorPaused), styleParam(r)))
 		return
 	}
 	value, ok, err := h.Repo.latestMetric(r.Context(), deviceID, "up")
 	if err != nil || !ok {
-		h.naBadge(w, label)
+		h.naBadge(w, r, label)
 		return
 	}
 	if value == 1 {
-		h.writeSVG(w, Render(label, queryParam(r, "upLabel", "Up"), colorParam(r, "upColor", ColorUp)))
+		h.writeSVG(w, Render(label, queryParam(r, "upLabel", "Up"), colorParam(r, "upColor", ColorUp), styleParam(r)))
 	} else {
-		h.writeSVG(w, Render(label, queryParam(r, "downLabel", "Down"), colorParam(r, "downColor", ColorDown)))
+		h.writeSVG(w, Render(label, queryParam(r, "downLabel", "Down"), colorParam(r, "downColor", ColorDown), styleParam(r)))
 	}
 }
 
@@ -216,16 +276,16 @@ func (h Handler) Uptime(w http.ResponseWriter, r *http.Request) {
 	label := labelParam(r, "Uptime")
 	dur, err := ParseDuration(r.PathValue("duration"), 24*time.Hour)
 	if err != nil {
-		h.naBadge(w, label)
+		h.naBadge(w, r, label)
 		return
 	}
 	if !h.gate(r.Context(), deviceID) {
-		h.naBadge(w, label)
+		h.naBadge(w, r, label)
 		return
 	}
 	pct, ok, qerr := h.Repo.uptimePct(r.Context(), deviceID, dur)
 	if qerr != nil || !ok {
-		h.naBadge(w, label)
+		h.naBadge(w, r, label)
 		return
 	}
 	color := ColorUp
@@ -235,7 +295,7 @@ func (h Handler) Uptime(w http.ResponseWriter, r *http.Request) {
 	case pct < 99:
 		color = ColorPending
 	}
-	h.writeSVG(w, Render(label, fmt.Sprintf("%.2f%%", pct), colorParam(r, "color", color)))
+	h.writeSVG(w, Render(label, fmt.Sprintf("%.2f%%", pct), colorParam(r, "color", color), styleParam(r)))
 }
 
 // Ping serves GET /api/v1/badge/{deviceId}/ping/{duration} — the latest
@@ -250,12 +310,12 @@ func (h Handler) Ping(w http.ResponseWriter, r *http.Request) {
 	label := labelParam(r, "Ping")
 	if d := r.PathValue("duration"); d != "" {
 		if _, err := ParseDuration(d, 24*time.Hour); err != nil {
-			h.naBadge(w, label)
+			h.naBadge(w, r, label)
 			return
 		}
 	}
 	if !h.gate(r.Context(), deviceID) {
-		h.naBadge(w, label)
+		h.naBadge(w, r, label)
 		return
 	}
 	value, ok, err := h.Repo.latestMetric(r.Context(), deviceID, "icmp_rtt_ms")
@@ -263,10 +323,10 @@ func (h Handler) Ping(w http.ResponseWriter, r *http.Request) {
 		value, ok, err = h.Repo.latestMetric(r.Context(), deviceID, "latency_ms")
 	}
 	if err != nil || !ok {
-		h.naBadge(w, label)
+		h.naBadge(w, r, label)
 		return
 	}
-	h.writeSVG(w, Render(label, fmt.Sprintf("%.0fms", value), colorParam(r, "color", ColorInfo)))
+	h.writeSVG(w, Render(label, fmt.Sprintf("%.0fms", value), colorParam(r, "color", ColorInfo), styleParam(r)))
 }
 
 // AvgResponse serves GET /api/v1/badge/{deviceId}/avg-response/{duration}
@@ -279,21 +339,21 @@ func (h Handler) AvgResponse(w http.ResponseWriter, r *http.Request) {
 	label := labelParam(r, "Avg Response")
 	dur, err := ParseDuration(r.PathValue("duration"), 24*time.Hour)
 	if err != nil {
-		h.naBadge(w, label)
+		h.naBadge(w, r, label)
 		return
 	}
 	if !h.gate(r.Context(), deviceID) {
-		h.naBadge(w, label)
+		h.naBadge(w, r, label)
 		return
 	}
 	for _, metric := range []string{"icmp_rtt_ms", "http_latency_ms", "latency_ms"} {
 		value, ok, qerr := h.Repo.avgMetric(r.Context(), deviceID, metric, dur)
 		if qerr == nil && ok {
-			h.writeSVG(w, Render(label, fmt.Sprintf("%.0fms", value), colorParam(r, "color", ColorInfo)))
+			h.writeSVG(w, Render(label, fmt.Sprintf("%.0fms", value), colorParam(r, "color", ColorInfo), styleParam(r)))
 			return
 		}
 	}
-	h.naBadge(w, label)
+	h.naBadge(w, r, label)
 }
 
 // Response serves GET /api/v1/badge/{deviceId}/response — the single most
@@ -303,17 +363,17 @@ func (h Handler) Response(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("deviceId")
 	label := labelParam(r, "Response")
 	if !h.gate(r.Context(), deviceID) {
-		h.naBadge(w, label)
+		h.naBadge(w, r, label)
 		return
 	}
 	for _, metric := range []string{"icmp_rtt_ms", "http_latency_ms", "latency_ms"} {
 		value, ok, qerr := h.Repo.latestMetric(r.Context(), deviceID, metric)
 		if qerr == nil && ok {
-			h.writeSVG(w, Render(label, fmt.Sprintf("%.0fms", value), colorParam(r, "color", ColorInfo)))
+			h.writeSVG(w, Render(label, fmt.Sprintf("%.0fms", value), colorParam(r, "color", ColorInfo), styleParam(r)))
 			return
 		}
 	}
-	h.naBadge(w, label)
+	h.naBadge(w, r, label)
 }
 
 // CertExp serves GET /api/v1/badge/{deviceId}/cert-exp — days until TLS
@@ -325,12 +385,12 @@ func (h Handler) CertExp(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("deviceId")
 	label := labelParam(r, "Cert Exp")
 	if !h.gate(r.Context(), deviceID) {
-		h.naBadge(w, label)
+		h.naBadge(w, r, label)
 		return
 	}
 	days, ok, err := h.Repo.latestMetric(r.Context(), deviceID, "http_cert_expiry_days")
 	if err != nil || !ok {
-		h.naBadge(w, label)
+		h.naBadge(w, r, label)
 		return
 	}
 	color := ColorUp
@@ -340,5 +400,5 @@ func (h Handler) CertExp(w http.ResponseWriter, r *http.Request) {
 	case days < 30:
 		color = ColorPending
 	}
-	h.writeSVG(w, Render(label, fmt.Sprintf("%.0f days", days), colorParam(r, "color", color)))
+	h.writeSVG(w, Render(label, fmt.Sprintf("%.0f days", days), colorParam(r, "color", color), styleParam(r)))
 }
