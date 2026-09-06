@@ -35,6 +35,7 @@ export default function SettingsPage() {
       <div className="grid gap-6">
         <TwoFACard />
         <ApiKeysCard />
+        <RetentionCard />
         <BackupCard />
       </div>
     </main>
@@ -195,6 +196,74 @@ function BackupCard() {
           ))}
         </Panel>
       )}
+    </Card>
+  );
+}
+
+type RetentionSetting = { tenantId: string; dataRetentionDays: number };
+
+function RetentionCard() {
+  const [days, setDays] = useState<string>("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    apiFetch<RetentionSetting>(`/tenants/${ORG}/retention`)
+      .then((res) => setDays(String(res.dataRetentionDays)))
+      .catch(() => setError("Unable to load the retention setting."))
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function save(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setSaving(true);
+    setError("");
+    setMessage("");
+    const value = days.trim() === "" ? 0 : Number(days);
+    try {
+      await apiFetch<RetentionSetting>(`/tenants/${ORG}/retention`, {
+        method: "PUT",
+        body: JSON.stringify({ dataRetentionDays: value }),
+      });
+      setMessage(
+        value < 1
+          ? "Saved — monitoring data will be kept forever."
+          : `Saved — monitoring data older than ${value} day${value === 1 ? "" : "s"} will be deleted automatically.`
+      );
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to save the retention setting.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Card title="Data retention" className="p-5">
+      <p className="mb-4 text-xs text-[#8B949E]">
+        How long RoutingNMS keeps monitoring history (ICMP/HTTP/DNS/push/SSH/Telnet/SNMP metric samples used for charts and sparklines) before
+        deleting it automatically. A background job runs once a day and permanently removes samples older than this period.
+      </p>
+      {message && <Banner>{message}</Banner>}
+      {error && <Banner tone="error">{error}</Banner>}
+      <form onSubmit={save} className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+        <FieldLabel>
+          Keep monitoring data for N days (0 or blank = keep forever)
+          <Input
+            type="number"
+            min={0}
+            placeholder="180"
+            value={days}
+            disabled={loading}
+            onChange={(e) => setDays(e.target.value)}
+            className="w-40"
+          />
+        </FieldLabel>
+        <Button variant="primary" disabled={loading || saving} type="submit">
+          {saving ? "Saving…" : "Save"}
+        </Button>
+      </form>
     </Card>
   );
 }
