@@ -135,6 +135,34 @@ func (h Handler) UpdateEnabled(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(d)
 }
 
+// UpdateEnabledBulk backs PUT /api/v1/devices/pause-bulk -- mirrors Uptime
+// Kuma's multi-select pause/resume action on its monitor list, applying
+// UpdateEnabled's same enabled-flag toggle to several devices at once.
+func (h Handler) UpdateEnabledBulk(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	var req struct {
+		IDs     []string `json:"ids"`
+		Enabled bool     `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON", 400)
+		return
+	}
+	if len(req.IDs) == 0 {
+		http.Error(w, "ids is required", 400)
+		return
+	}
+	if err := h.Repo.SetEnabledBulk(r.Context(), req.IDs, req.Enabled); err != nil {
+		http.Error(w, "failed to update device state: "+err.Error(), 500)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"updated": len(req.IDs), "enabled": req.Enabled})
+}
+
 // UpdateHTTPCheck backs PUT /api/v1/devices/{id}/http-check -- configures
 // the optional HTTP(S)+keyword monitor ported from Uptime Kuma.
 func (h Handler) UpdateHTTPCheck(w http.ResponseWriter, r *http.Request) {

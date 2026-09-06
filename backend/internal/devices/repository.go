@@ -524,6 +524,22 @@ func (r Repository) SetEnabled(ctx context.Context, id string, enabled bool) err
 	return err
 }
 
+// SetEnabledBulk pauses/resumes several devices in one statement, mirroring
+// Uptime Kuma's multi-select pause/resume action on its monitor list. Any id
+// that doesn't exist is silently ignored (matching a plain UPDATE ... WHERE
+// id = ANY($1)), so a partially-stale selection from the UI doesn't error
+// out the whole batch.
+func (r Repository) SetEnabledBulk(ctx context.Context, ids []string, enabled bool) error {
+	if r.DB == nil {
+		return fmt.Errorf("device repository is not initialized")
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	_, err := r.DB.Exec(ctx, `UPDATE devices SET enabled=$2, updated_at=NOW() WHERE id = ANY($1)`, ids, enabled)
+	return err
+}
+
 // ExistsByName reports whether a device with this exact name already exists
 // for the organization -- used by backup/restore's "skip" import mode
 // (internal/backup) to decide whether to import a given device.

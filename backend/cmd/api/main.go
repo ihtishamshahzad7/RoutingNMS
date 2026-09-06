@@ -277,6 +277,7 @@ func main() {
 		mux.Handle("PUT /api/v1/devices/{id}/ssh-check", authHandler.Middleware(http.HandlerFunc(deviceHandler.UpdateSSHCheck)))
 		mux.Handle("PUT /api/v1/devices/{id}/telnet-check", authHandler.Middleware(http.HandlerFunc(deviceHandler.UpdateTelnetCheck)))
 		mux.Handle("PUT /api/v1/devices/{id}/pause", authHandler.Middleware(http.HandlerFunc(deviceHandler.UpdateEnabled)))
+		mux.Handle("PUT /api/v1/devices/pause-bulk", authHandler.Middleware(http.HandlerFunc(deviceHandler.UpdateEnabledBulk)))
 		mux.Handle("POST /api/v1/devices/", authHandler.Middleware(http.HandlerFunc(discoveryHandler.Discover)))
 		mux.Handle("GET /api/v1/devices/", authHandler.Middleware(http.HandlerFunc(discoveryHandler.Interfaces)))
 
@@ -646,6 +647,7 @@ func main() {
 		mux.HandleFunc("PUT /api/v1/devices/{id}/ssh-check", unavailable)
 		mux.HandleFunc("PUT /api/v1/devices/{id}/telnet-check", unavailable)
 		mux.HandleFunc("PUT /api/v1/devices/{id}/pause", unavailable)
+		mux.HandleFunc("PUT /api/v1/devices/pause-bulk", unavailable)
 		mux.HandleFunc("GET /api/v1/dns/", unavailable)
 		mux.HandleFunc("POST /api/v1/dns/", unavailable)
 		mux.HandleFunc("GET /api/v1/ssh/", unavailable)
