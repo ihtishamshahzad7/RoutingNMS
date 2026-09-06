@@ -150,6 +150,21 @@ func (r Repository) FullGroup(ctx context.Context, groupID int64) (Group, []Devi
 
 // ---- Devices ----
 
+// DeviceByID loads a single canvas device -- used by the real-discovery
+// handler (discovery.go) to resolve the seed device's linkedDeviceId and
+// canvas position before walking its LLDP neighbors.
+func (r Repository) DeviceByID(ctx context.Context, id string) (Device, error) {
+	if r.DB == nil {
+		return Device{}, fmt.Errorf("workspacetopology repository is not initialized")
+	}
+	var d Device
+	err := r.DB.QueryRow(ctx,
+		`SELECT id,group_id,name,kind,address,snmp_community,pos_x,pos_y,linked_device_id,created_at,updated_at
+		 FROM workspace_topology_devices WHERE id=$1`, id).
+		Scan(&d.ID, &d.GroupID, &d.Name, &d.Kind, &d.Address, &d.SNMPCommunity, &d.PosX, &d.PosY, &d.LinkedDeviceID, &d.CreatedAt, &d.UpdatedAt)
+	return d, err
+}
+
 func (r Repository) DevicesOf(ctx context.Context, groupID int64) ([]Device, error) {
 	if r.DB == nil {
 		return nil, fmt.Errorf("workspacetopology repository is not initialized")

@@ -1,26 +1,42 @@
-// Auto-discovery engine, mocked for this sprint.
+// Auto-discovery engine.
 //
-// The real thing this stands in for: RoutingNMS already has a working SNMP
-// walker (backend/internal/snmp.Collector.Discover, IF-MIB ifTable) exposed
-// at POST /api/v1/devices/{id}/discover -- see the topology-links feature,
-// which already calls it for live interface suggestions. It does NOT yet
-// walk lldpRemTable or cdpCacheTable (LLDP/CDP neighbor discovery), which is
-// what this feature actually needs to auto-populate a canvas with
-// neighboring devices and the links between them -- that is new backend
-// work, out of scope for this mocked sprint per the request ("Backend
-// (mocked for now, but designed for integration)").
+// Real discovery landed: when the seed canvas device is linked to a real,
+// monitored RoutingNMS device (CanvasDevice.linkedDeviceId), discoverReal()
+// below calls POST /api/v1/workspace-topology/groups/{groupId}/discover,
+// which walks that device's real LLDP-MIB neighbors (backend/internal/
+// topology's existing SNMPNeighborDiscovery, the same walker the scheduled
+// topology-links discovery engine uses) and persists any newly-found
+// neighbors as canvas devices/links server-side.
 //
-// discoverFromSeed() is written as the seam: swap its body for a real fetch
-// to a future `POST /api/v1/discovery/lldp-cdp?seed=<deviceId>` endpoint and
-// nothing else in this feature needs to change, since callers only depend
-// on the DiscoveryResult shape below.
+// discoverFromSeed() (the mock below) is kept as the fallback for a canvas
+// device with no linkedDeviceId -- there's nothing real to walk from in
+// that case, so store.ts's runDiscovery still falls back to this to keep
+// the "click Discover, canvas populates" demo usable for an unlinked/
+// exploratory workspace.
 
 import type { CanvasDevice, CanvasLink, DeviceKind } from "./types";
+import { apiFetch } from "../../../lib/api";
 
 export type DiscoveryResult = {
   devices: CanvasDevice[];
   links: CanvasLink[];
 };
+
+/**
+ * Runs real SNMP/LLDP neighbor discovery from a seed canvas device that's
+ * linked to a monitored RoutingNMS device. Throws if the seed isn't linked,
+ * the backend can't reach it over SNMP, or the request otherwise fails --
+ * callers should catch and fall back to discoverFromSeed() (the mock).
+ */
+export async function discoverReal(groupId: string, seed: CanvasDevice): Promise<DiscoveryResult> {
+  if (!seed.linkedDeviceId) {
+    throw new Error("seed device is not linked to a monitored device");
+  }
+  return apiFetch<DiscoveryResult>(`/workspace-topology/groups/${groupId}/discover`, {
+    method: "POST",
+    body: JSON.stringify({ seedDeviceId: seed.id }),
+  });
+}
 
 const MOCK_KINDS: DeviceKind[] = ["router", "switch", "firewall", "server"];
 

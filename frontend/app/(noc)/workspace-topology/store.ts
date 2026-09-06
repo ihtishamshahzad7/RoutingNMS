@@ -9,7 +9,7 @@ import type {
   WorkspaceAlert,
   WorkspaceGroup,
 } from "./types";
-import { discoverFromSeed } from "./discovery";
+import { discoverFromSeed, discoverReal } from "./discovery";
 import { generateLiveMetrics, generatePowerMetrics, tickLiveMetrics } from "./mockMetrics";
 import { apiFetch, ApiError } from "../../../lib/api";
 
@@ -277,7 +277,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     if (!seed) return;
     set({ discovering: true });
     try {
-      const result = await discoverFromSeed(groupId, seed);
+      // Real SNMP/LLDP discovery when the seed is linked to a monitored
+      // device -- the backend already persists whatever it finds, so those
+      // results just get merged into local state (no extra persist calls,
+      // unlike the mock path below). Falls back to the mock generator for
+      // an unlinked seed, or if the real probe fails (unreachable device,
+      // SNMP disabled, etc.) so the canvas stays usable either way.
+      let result;
+      let alreadyPersisted = false;
+      try {
+        result = await discoverReal(groupId, seed);
+        alreadyPersisted = true;
+      } catch {
+        result = await discoverFromSeed(groupId, seed);
+      }
       set((s) => {
         const newMetrics = { ...s.metricsByDevice };
         for (const d of result.devices) newMetrics[d.id] = generateLiveMetrics(d.name);
@@ -287,11 +300,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           metricsByDevice: newMetrics,
         };
       });
-      for (const d of result.devices) {
-        persist(() => apiFetch(`/workspace-topology/groups/${groupId}/devices`, { method: "POST", body: JSON.stringify(d) }));
-      }
-      for (const l of result.links) {
-        persist(() => apiFetch(`/workspace-topology/groups/${groupId}/links`, { method: "POST", body: JSON.stringify(l) }));
+      if (!alreadyPersisted) {
+        for (const d of result.devices) {
+          persist(() => apiFetch(`/workspace-topology/groups/${groupId}/devices`, { method: "POST", body: JSON.stringify(d) }));
+        }
+        for (const l of result.links) {
+          persist(() => apiFetch(`/workspace-topology/groups/${groupId}/links`, { method: "POST", body: JSON.stringify(l) }));
+        }
       }
     } finally {
       set({ discovering: false });

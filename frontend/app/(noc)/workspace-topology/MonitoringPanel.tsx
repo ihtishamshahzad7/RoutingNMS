@@ -1,12 +1,18 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { LineChart, Line, ResponsiveContainer, YAxis, Tooltip } from "recharts";
-import { X, Zap } from "lucide-react";
+import { X, Zap, Radar } from "lucide-react";
 import styles from "./glass.module.css";
 import { useWorkspaceStore } from "./store";
 import { generatePowerMetrics } from "./store";
 import { generateUptimeTimeline } from "./mockMetrics";
+import { apiFetch } from "../../../lib/api";
+
+// Single-tenant placeholder, same convention used by every other (noc) page.
+const ORG = "tenant-1";
+
+type RealDevice = { id: string; name: string };
 
 function MiniChart({ data, color }: { data: { t: number; value: number }[]; color: string }) {
   return (
@@ -27,6 +33,16 @@ export default function MonitoringPanel({ deviceId, onClose }: { deviceId: strin
   const device = useWorkspaceStore((s) => s.devices.find((d) => d.id === deviceId));
   const metrics = useWorkspaceStore((s) => s.metricsByDevice[deviceId]);
   const alerts = useWorkspaceStore((s) => s.alerts.filter((a) => a.deviceId === deviceId));
+  const updateDevice = useWorkspaceStore((s) => s.updateDevice);
+  const runDiscovery = useWorkspaceStore((s) => s.runDiscovery);
+  const discovering = useWorkspaceStore((s) => s.discovering);
+
+  const [realDevices, setRealDevices] = useState<RealDevice[]>([]);
+  useEffect(() => {
+    apiFetch<RealDevice[]>(`/devices?organizationId=${ORG}`)
+      .then(setRealDevices)
+      .catch(() => {}); // real-device linking is optional -- fine if this list can't load
+  }, []);
 
   // Uptime timeline and power metrics are cheap to regenerate per open and
   // don't need to live in the shared store (nothing else reads them).
@@ -44,6 +60,48 @@ export default function MonitoringPanel({ deviceId, onClose }: { deviceId: strin
         </div>
         <button onClick={onClose} style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer" }}>
           <X size={18} />
+        </button>
+      </div>
+
+      <div className={styles.sectionTitle}>Real device link</div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <select
+          value={device.linkedDeviceId || ""}
+          onChange={(e) => updateDevice(device.id, { linkedDeviceId: e.target.value || undefined })}
+          style={{
+            flex: 1,
+            background: "#0f0f18",
+            color: "#e2e8f0",
+            border: "1px solid rgba(255,255,255,0.1)",
+            borderRadius: 6,
+            padding: "4px 8px",
+            fontSize: 12.5,
+          }}
+        >
+          <option value="">Not linked (mock monitoring)</option>
+          {realDevices.map((d) => (
+            <option key={d.id} value={d.id}>{d.name}</option>
+          ))}
+        </select>
+        <button
+          onClick={() => runDiscovery(device.groupId, device.id)}
+          disabled={!device.linkedDeviceId || discovering}
+          title={device.linkedDeviceId ? "Walk this device's real LLDP neighbors" : "Link a real device first"}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            background: "rgba(34,211,238,0.12)",
+            color: device.linkedDeviceId ? "#22d3ee" : "#475569",
+            border: "1px solid rgba(34,211,238,0.25)",
+            borderRadius: 6,
+            padding: "4px 10px",
+            fontSize: 12,
+            cursor: device.linkedDeviceId && !discovering ? "pointer" : "not-allowed",
+            whiteSpace: "nowrap",
+          }}
+        >
+          <Radar size={13} /> {discovering ? "Discovering…" : "Discover"}
         </button>
       </div>
 

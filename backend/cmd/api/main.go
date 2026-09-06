@@ -600,6 +600,7 @@ func main() {
 		mux.Handle("DELETE /api/v1/workspace-topology/devices/{id}", authHandler.Middleware(workspacetopology.DeviceAPI{Repo: workspaceTopologyRepo}))
 		mux.Handle("POST /api/v1/workspace-topology/groups/{id}/links", authHandler.Middleware(workspacetopology.LinksAPI{Repo: workspaceTopologyRepo}))
 		mux.Handle("DELETE /api/v1/workspace-topology/links/{id}", authHandler.Middleware(workspacetopology.LinkAPI{Repo: workspaceTopologyRepo}))
+		mux.Handle("POST /api/v1/workspace-topology/groups/{id}/discover", authHandler.Middleware(workspacetopology.DiscoveryAPI{Service: workspacetopology.DiscoveryService{Repo: workspaceTopologyRepo, Devices: devicesRepo}}))
 
 		// Configuration backup/restore -- a JSON export/import of devices,
 		// tags, device groups, notification channels and alert rules

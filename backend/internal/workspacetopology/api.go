@@ -305,3 +305,48 @@ func (a LinkAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// DiscoveryAPI backs POST /api/v1/workspace-topology/groups/{id}/discover --
+// real SNMP/LLDP neighbor discovery from a canvas device that's linked to a
+// monitored RoutingNMS device (see discovery.go). Longer timeout than the
+// other handlers here since it does a live SNMP probe over the network.
+type DiscoveryAPI struct{ Service DiscoveryService }
+
+func (a DiscoveryAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+
+	groupID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid group id", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		SeedDeviceID string `json:"seedDeviceId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	newDevices, newLinks, err := a.Service.DiscoverFromSeed(ctx, groupID, req.SeedDeviceID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	deviceDTOs := make([]DeviceDTO, 0, len(newDevices))
+	for _, d := range newDevices {
+		deviceDTOs = append(deviceDTOs, deviceToDTO(d))
+	}
+	linkDTOs := make([]LinkDTO, 0, len(newLinks))
+	for _, l := range newLinks {
+		linkDTOs = append(linkDTOs, linkToDTO(l))
+	}
+	writeJSON(w, struct {
+		Devices []DeviceDTO `json:"devices"`
+		Links   []LinkDTO   `json:"links"`
+	}{Devices: deviceDTOs, Links: linkDTOs})
+}
