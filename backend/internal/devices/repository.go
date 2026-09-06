@@ -438,3 +438,59 @@ func (r Repository) TouchProvisioned(ctx context.Context, id string) error {
 	_, err := r.DB.Exec(ctx, `UPDATE devices SET last_provisioned_at=NOW() WHERE id=$1`, id)
 	return err
 }
+
+// SetEnabled toggles a device's enabled flag without touching anything
+// else. There is no existing enable/disable endpoint for devices in
+// RoutingNMS today (Create always inserts enabled=true and nothing else
+// ever changes it) -- this is added for backup/restore (internal/backup),
+// which mirrors Uptime Kuma's "start the monitor if it was active in the
+// backup, otherwise leave it paused" restore behavior.
+func (r Repository) SetEnabled(ctx context.Context, id string, enabled bool) error {
+	if r.DB == nil {
+		return fmt.Errorf("device repository is not initialized")
+	}
+	_, err := r.DB.Exec(ctx, `UPDATE devices SET enabled=$2, updated_at=NOW() WHERE id=$1`, id, enabled)
+	return err
+}
+
+// ExistsByName reports whether a device with this exact name already exists
+// for the organization -- used by backup/restore's "skip" import mode
+// (internal/backup) to decide whether to import a given device.
+func (r Repository) ExistsByName(ctx context.Context, organizationID, name string) (bool, error) {
+	if r.DB == nil {
+		return false, fmt.Errorf("device repository is not initialized")
+	}
+	var exists bool
+	err := r.DB.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM devices WHERE organization_id=$1 AND name=$2)`, organizationID, name).Scan(&exists)
+	return exists, err
+}
+
+// DeleteAllForOrg removes every device belonging to an organization, along
+// with any tag/device-group assignments referencing them (those tables key
+// a device by its id as plain text, with no foreign key, so they are not
+// cleaned up automatically). Used by backup/restore's "overwrite" import
+// mode (internal/backup) before re-importing a bundle's devices fresh.
+//
+// Deliberately does not touch heartbeats/metric samples -- backup/restore is
+// scoped to configuration only, so historical monitoring data for devices
+// outside the bundle is left alone even when they're deleted here.
+func (r Repository) DeleteAllForOrg(ctx context.Context, organizationID string) error {
+	if r.DB == nil {
+		return fmt.Errorf("device repository is not initialized")
+	}
+	tx, err := r.DB.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `DELETE FROM tag_assignments WHERE subject_type='device' AND subject_id IN (SELECT id::text FROM devices WHERE organization_id=$1)`, organizationID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM device_group_members WHERE subject_type='device' AND subject_id IN (SELECT id::text FROM devices WHERE organization_id=$1)`, organizationID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM devices WHERE organization_id=$1`, organizationID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}

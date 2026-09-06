@@ -11,9 +11,11 @@ package devicegroups
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -91,6 +93,53 @@ func (r Repository) Delete(ctx context.Context, id int64) error {
 		return fmt.Errorf("devicegroups repository is not initialized")
 	}
 	_, err := r.DB.Exec(ctx, `DELETE FROM device_groups WHERE id=$1`, id)
+	return err
+}
+
+// ExistsByName reports whether a group with this exact name already exists
+// for the tenant -- used by backup/restore's "skip" import mode
+// (internal/backup).
+func (r Repository) ExistsByName(ctx context.Context, tenantID, name string) (bool, error) {
+	if r.DB == nil {
+		return false, fmt.Errorf("devicegroups repository is not initialized")
+	}
+	var exists bool
+	err := r.DB.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM device_groups WHERE tenant_id=$1 AND name=$2)`, tenantID, name).Scan(&exists)
+	return exists, err
+}
+
+// GetOrCreateByName returns the existing group with this name for the
+// tenant, or creates it if none exists yet. Groups are matched by name
+// rather than id because ids won't line up after a backup/restore
+// round-trip (internal/backup) -- mirroring how tags are resolved there.
+// Also used for "keep"/"skip" import modes, since `device_groups` has a
+// UNIQUE(tenant_id,name) constraint that a plain duplicate insert would
+// violate.
+func (r Repository) GetOrCreateByName(ctx context.Context, tenantID, name string, sortOrder int) (Group, error) {
+	if r.DB == nil {
+		return Group{}, fmt.Errorf("devicegroups repository is not initialized")
+	}
+	var out Group
+	err := r.DB.QueryRow(ctx, `SELECT id,tenant_id,name,sort_order FROM device_groups WHERE tenant_id=$1 AND name=$2`, tenantID, name).
+		Scan(&out.ID, &out.TenantID, &out.Name, &out.SortOrder)
+	if err == nil {
+		return out, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return Group{}, err
+	}
+	return r.Create(ctx, Group{TenantID: tenantID, Name: name, SortOrder: sortOrder})
+}
+
+// DeleteAllForTenant removes every group belonging to a tenant -- their
+// device_group_members rows cascade automatically (ON DELETE CASCADE on
+// group_id). Used by backup/restore's "overwrite" import mode
+// (internal/backup).
+func (r Repository) DeleteAllForTenant(ctx context.Context, tenantID string) error {
+	if r.DB == nil {
+		return fmt.Errorf("devicegroups repository is not initialized")
+	}
+	_, err := r.DB.Exec(ctx, `DELETE FROM device_groups WHERE tenant_id=$1`, tenantID)
 	return err
 }
 

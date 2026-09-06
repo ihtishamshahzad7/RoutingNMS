@@ -250,3 +250,52 @@ func (r Repository) DeleteChannel(ctx context.Context, id int64) error {
 	_, err := r.DB.Exec(ctx, `DELETE FROM notification_channels WHERE id=$1`, id)
 	return err
 }
+
+// ChannelExistsByName reports whether a notification channel with this
+// exact name already exists for the tenant -- used by backup/restore's
+// "skip" import mode (internal/backup).
+func (r Repository) ChannelExistsByName(ctx context.Context, tenantID, name string) (bool, error) {
+	if r.DB == nil {
+		return false, fmt.Errorf("alerts repository is not initialized")
+	}
+	var exists bool
+	err := r.DB.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM notification_channels WHERE tenant_id=$1 AND name=$2)`, tenantID, name).Scan(&exists)
+	return exists, err
+}
+
+// DeleteAllChannelsForTenant removes every notification channel belonging
+// to a tenant. Used by backup/restore's "overwrite" import mode
+// (internal/backup).
+func (r Repository) DeleteAllChannelsForTenant(ctx context.Context, tenantID string) error {
+	if r.DB == nil {
+		return fmt.Errorf("alerts repository is not initialized")
+	}
+	_, err := r.DB.Exec(ctx, `DELETE FROM notification_channels WHERE tenant_id=$1`, tenantID)
+	return err
+}
+
+// RuleExistsByName reports whether an alert rule with this exact name
+// already exists. alert_rules has no tenant_id column (it predates
+// per-tenant scoping), so this checks across the whole table -- used by
+// backup/restore's "skip" import mode (internal/backup).
+func (r Repository) RuleExistsByName(ctx context.Context, name string) (bool, error) {
+	if r.DB == nil {
+		return false, fmt.Errorf("alerts repository is not initialized")
+	}
+	var exists bool
+	err := r.DB.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM alert_rules WHERE name=$1)`, name).Scan(&exists)
+	return exists, err
+}
+
+// DeleteAllRules removes every alert rule. alert_rules has no tenant_id
+// column, so this is instance-wide, not scoped to one tenant -- used by
+// backup/restore's "overwrite" import mode (internal/backup), which
+// documents this as a known limitation of restoring on a multi-tenant
+// deployment.
+func (r Repository) DeleteAllRules(ctx context.Context) error {
+	if r.DB == nil {
+		return fmt.Errorf("alerts repository is not initialized")
+	}
+	_, err := r.DB.Exec(ctx, `DELETE FROM alert_rules`)
+	return err
+}

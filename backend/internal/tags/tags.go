@@ -8,9 +8,11 @@ package tags
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -143,6 +145,52 @@ func (r Repository) AllAssignments(ctx context.Context) ([]Assignment, error) {
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// ExistsByName reports whether a tag with this exact name already exists
+// for the tenant -- used by backup/restore's "skip" import mode
+// (internal/backup).
+func (r Repository) ExistsByName(ctx context.Context, tenantID, name string) (bool, error) {
+	if r.DB == nil {
+		return false, fmt.Errorf("tags repository is not initialized")
+	}
+	var exists bool
+	err := r.DB.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM tags WHERE tenant_id=$1 AND name=$2)`, tenantID, name).Scan(&exists)
+	return exists, err
+}
+
+// GetOrCreateByName returns the existing tag with this name for the tenant,
+// or creates it (with the given color) if none exists yet. Tags are matched
+// by name rather than id because ids won't line up after a backup/restore
+// round-trip (internal/backup) -- mirroring how Uptime Kuma resolves tag
+// names referenced by imported monitors. Also used there for "keep"/"skip"
+// import modes, since `tags` has a UNIQUE(tenant_id,name) constraint that a
+// plain duplicate insert would violate.
+func (r Repository) GetOrCreateByName(ctx context.Context, tenantID, name, color string) (Tag, error) {
+	if r.DB == nil {
+		return Tag{}, fmt.Errorf("tags repository is not initialized")
+	}
+	var out Tag
+	err := r.DB.QueryRow(ctx, `SELECT id,tenant_id,name,color FROM tags WHERE tenant_id=$1 AND name=$2`, tenantID, name).
+		Scan(&out.ID, &out.TenantID, &out.Name, &out.Color)
+	if err == nil {
+		return out, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return Tag{}, err
+	}
+	return r.Create(ctx, Tag{TenantID: tenantID, Name: name, Color: color})
+}
+
+// DeleteAllForTenant removes every tag belonging to a tenant -- their
+// tag_assignments rows cascade automatically (ON DELETE CASCADE on tag_id).
+// Used by backup/restore's "overwrite" import mode (internal/backup).
+func (r Repository) DeleteAllForTenant(ctx context.Context, tenantID string) error {
+	if r.DB == nil {
+		return fmt.Errorf("tags repository is not initialized")
+	}
+	_, err := r.DB.Exec(ctx, `DELETE FROM tags WHERE tenant_id=$1`, tenantID)
+	return err
 }
 
 // ReplaceForSubject atomically sets the full tag list for one device/OLT --

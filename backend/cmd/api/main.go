@@ -17,6 +17,7 @@ import (
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/alertsfeed"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/apikeys"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/auth"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/backup"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/customers"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/devicegroups"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/devices"
@@ -550,6 +551,15 @@ func main() {
 		mux.Handle("GET /api/v1/device-groups/members", authHandler.Middleware(devicegroups.MembersAPI{Repo: deviceGroupsRepo}))
 		mux.Handle("PUT /api/v1/device-groups/{id}/reorder", authHandler.Middleware(devicegroups.ReorderAPI{Repo: deviceGroupsRepo}))
 		mux.Handle("PUT /api/v1/device-group-assignments/{subjectType}/{subjectId}", authHandler.Middleware(devicegroups.AssignmentAPI{Repo: deviceGroupsRepo}))
+
+		// Configuration backup/restore -- a JSON export/import of devices,
+		// tags, device groups, notification channels and alert rules
+		// (internal/backup), adapted from Uptime Kuma's Backup feature.
+		// Reuses the same repositories wired up above rather than opening
+		// new ones.
+		backupRepos := backup.Repositories{Devices: devicesRepo, Tags: tagsRepo, DeviceGroups: deviceGroupsRepo, Alerts: alertRepo}
+		mux.Handle("GET /api/v1/backup", authHandler.Middleware(backup.ExportAPI{Repos: backupRepos}))
+		mux.Handle("POST /api/v1/backup/import", authHandler.Middleware(backup.ImportAPI{Repos: backupRepos}))
 
 		// Sprint 3 — ISP features: physical sites, wireless access points,
 		// and subscriber customer connections (migration 0018). Session-authed
