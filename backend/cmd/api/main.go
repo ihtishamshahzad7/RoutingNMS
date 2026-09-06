@@ -551,7 +551,7 @@ func main() {
 		// grey "N/A" badge, never revealing whether a private/nonexistent
 		// device exists). {duration} is optional on uptime/ping/avg-response
 		// (mirrors Kuma's `:duration?`), so each is registered twice.
-		badgesHandler := badges.Handler{Repo: badges.Repository{DB: db}, Maintenance: maintenance.Checker{DB: db}}
+		badgesHandler := badges.Handler{Repo: badges.Repository{DB: db}, Maintenance: maintenance.Checker{DB: db}, Ping: pingPoller}
 		mux.HandleFunc("GET /api/v1/badge/{deviceId}/status", badgesHandler.Status)
 		mux.HandleFunc("GET /api/v1/badge/{deviceId}/uptime", badgesHandler.Uptime)
 		mux.HandleFunc("GET /api/v1/badge/{deviceId}/uptime/{duration}", badgesHandler.Uptime)

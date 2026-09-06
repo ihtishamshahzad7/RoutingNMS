@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/maintenance"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/ping"
 )
 
 // Repository is a thin read-only view over data other packages already own
@@ -157,6 +158,12 @@ type Handler struct {
 	// tolerated (badges just never reports the maintenance state), so
 	// existing test/wiring code that doesn't set it keeps working.
 	Maintenance maintenance.Checker
+	// Ping answers whether a device is currently "pending" (mid-retry,
+	// see internal/ping.Poller.IsPending). Nil is tolerated the same way
+	// as Maintenance -- badges just never reports the pending state,
+	// which is also correct for any device this poller doesn't track
+	// (non-ICMP-monitored devices, or ICMP devices with retries<=1).
+	Ping *ping.Poller
 }
 
 func (h Handler) writeSVG(w http.ResponseWriter, svg string) {
@@ -218,19 +225,25 @@ func (h Handler) gate(ctx context.Context, deviceID string) bool {
 // Status serves GET /api/v1/badge/{deviceId}/status.
 //
 // Query params: label (default "Status"), upLabel/downLabel/pausedLabel/
-// maintenanceLabel (default "Up"/"Down"/"Paused"/"Maintenance"),
-// upColor/downColor/pausedColor/maintenanceColor (hex, `#` optional), and
-// style (flat [default] / flat-square / plastic / for-the-badge).
+// maintenanceLabel/pendingLabel (default "Up"/"Down"/"Paused"/
+// "Maintenance"/"Pending"), upColor/downColor/pausedColor/
+// maintenanceColor/pendingColor (hex, `#` optional), and style (flat
+// [default] / flat-square / plastic / for-the-badge).
 //
 // Resolution order, checked before falling back to the plain up/down value:
 // maintenance (the device is covered by an active maintenance window --
 // see internal/maintenance.Checker.ActiveSubjects) takes top priority, then
 // paused (the device has monitoring paused via the pause/resume feature --
-// devices.enabled=false), then the latest "up" metric_samples value, then
-// N/A if there's no recent sample at all. Kuma's own "pending" state (a
-// monitor whose first check hasn't completed, or that's mid-retry before
-// being marked down) has no direct equivalent in RoutingNMS's model today,
-// so it isn't produced here.
+// devices.enabled=false), then pending (the device is mid-retry on its
+// ICMP checks -- see internal/ping.Poller.IsPending), then the latest "up"
+// metric_samples value, then N/A if there's no recent sample at all.
+//
+// Pending is a narrower reproduction of Kuma's own state than the other
+// three: Kuma tracks a consecutive-failure streak for every monitor type,
+// but only RoutingNMS's ICMP poller keeps that streak today (see
+// ping.Poller.gate) -- an HTTP/SSH/DNS/etc.-monitored device that's
+// currently failing but hasn't been marked down by its own retry logic
+// still just reports whatever its "up" metric_samples value already is.
 func (h Handler) Status(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("deviceId")
 	label := labelParam(r, "Status")
@@ -238,15 +251,20 @@ func (h Handler) Status(w http.ResponseWriter, r *http.Request) {
 		h.naBadge(w, r, label)
 		return
 	}
-	// Maintenance and paused both take priority over the up/down value --
-	// mirrors Kuma's own badge, which never reports a stale "up"/"down"
-	// for a monitor that's under planned downtime or explicitly paused.
+	// Maintenance, paused and pending all take priority over the plain
+	// up/down value -- mirrors Kuma's own badge, which never reports a
+	// stale "up"/"down" for a monitor that's under planned downtime,
+	// explicitly paused, or still inside its retry grace period.
 	if h.isUnderMaintenance(r.Context(), deviceID) {
 		h.writeSVG(w, Render(label, queryParam(r, "maintenanceLabel", "Maintenance"), colorParam(r, "maintenanceColor", ColorMaintenance), styleParam(r)))
 		return
 	}
 	if paused, ok, err := h.Repo.isPaused(r.Context(), deviceID); err == nil && ok && paused {
 		h.writeSVG(w, Render(label, queryParam(r, "pausedLabel", "Paused"), colorParam(r, "pausedColor", ColorPaused), styleParam(r)))
+		return
+	}
+	if h.Ping != nil && h.Ping.IsPending(deviceID) {
+		h.writeSVG(w, Render(label, queryParam(r, "pendingLabel", "Pending"), colorParam(r, "pendingColor", ColorPending), styleParam(r)))
 		return
 	}
 	value, ok, err := h.Repo.latestMetric(r.Context(), deviceID, "up")

@@ -162,6 +162,7 @@ type Poller struct {
 	mu          sync.Mutex
 	live        map[string]Result // device id -> most recent probe result (gated by Retries, see gate)
 	consecFails map[string]int    // device id -> consecutive failed probe cycles since the last success
+	pending     map[string]bool   // device id -> true while mid-retry: probe just failed, but gate() is still reporting it as up because Retries hasn't been reached yet
 }
 
 // ProbeFunc performs one ICMP probe and returns the parsed result. Swappable
@@ -170,7 +171,7 @@ type ProbeFunc func(ctx context.Context, device IcmpEnabledDevice) Result
 
 // New builds a poller; probe defaults to execPing.
 func New(repo Repository, metrics metricsdb.Repository) *Poller {
-	return &Poller{repo: repo, metrics: metrics, probe: ExecPing, live: map[string]Result{}, consecFails: map[string]int{}}
+	return &Poller{repo: repo, metrics: metrics, probe: ExecPing, live: map[string]Result{}, consecFails: map[string]int{}, pending: map[string]bool{}}
 }
 
 // gate applies the "retries before down" rule (ported from Uptime Kuma's
@@ -248,6 +249,15 @@ func (p *Poller) pollOnce(ctx context.Context) {
 		res.Reachable = gated
 		p.mu.Lock()
 		p.live[d.ID] = res
+		// pending: the raw probe just failed, but gate() is still reporting
+		// this device as up because it hasn't yet failed `Retries`
+		// consecutive cycles -- Kuma's "pending" state, ported for the one
+		// monitor type (ICMP) that already tracks a consecutive-failure
+		// streak. rawReachable==false && gated==true can only happen when
+		// Retries>1 (see gate's early return for Retries<=1), so this is
+		// never true for devices using the pre-existing immediate-down
+		// default.
+		p.pending[d.ID] = !rawReachable && gated
 		p.mu.Unlock()
 
 		up := 0.0
@@ -268,6 +278,17 @@ func (p *Poller) Live(deviceID string) (Result, bool) {
 	defer p.mu.Unlock()
 	res, ok := p.live[deviceID]
 	return res, ok
+}
+
+// IsPending reports whether a device is currently mid-retry: its last probe
+// failed, but it hasn't yet failed enough consecutive cycles to be reported
+// as down (see the `pending` field and gate). Devices never polled by this
+// ICMP poller (icmp_enabled=false, or never seen a failure) report false --
+// callers should treat that the same as "not pending", not as an error.
+func (p *Poller) IsPending(deviceID string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.pending[deviceID]
 }
 
 // Force probes a single device immediately and returns the result.
