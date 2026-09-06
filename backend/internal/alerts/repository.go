@@ -299,3 +299,18 @@ func (r Repository) DeleteAllRules(ctx context.Context) error {
 	_, err := r.DB.Exec(ctx, `DELETE FROM alert_rules`)
 	return err
 }
+
+// DeviceName looks up a device's display name for use in notification
+// payloads (Notify's Subject.Name) -- deliberately returns "" rather than an
+// error for a missing/unresolvable device, since a notification should still
+// go out (falling back to the alert title) rather than failing outright.
+func (r Repository) DeviceName(ctx context.Context, deviceID string) string {
+	if r.DB == nil || deviceID == "" {
+		return ""
+	}
+	var name string
+	if err := r.DB.QueryRow(ctx, `SELECT name FROM devices WHERE id=$1`, deviceID).Scan(&name); err != nil {
+		return ""
+	}
+	return name
+}

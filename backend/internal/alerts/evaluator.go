@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/incidents"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/tags"
 )
 
 // Evaluator is the Sprint 2 background loop that wires the previously dormant
@@ -224,7 +225,7 @@ func (e *Evaluator) fire(ctx context.Context, alert Alert, pr PersistedRule) {
 	if durable.ID > 0 {
 		body += " (incident #" + strconv.FormatInt(durable.ID, 10) + ")"
 	}
-	e.Notifier.Notify(ctx, pr.NotificationChannelIDs, title, body, string(alert.Severity))
+	e.Notifier.NotifyWithSubject(ctx, pr.NotificationChannelIDs, e.subjectFor(ctx, alert.DeviceID), title, body, string(alert.Severity))
 }
 
 // resolve notifies the rule's channels that a previously-breaching condition
@@ -247,7 +248,29 @@ func (e *Evaluator) resolve(ctx context.Context, alert Alert, pr PersistedRule) 
 	body := "RESOLVED: Rule " + pr.Name + " (" + pr.RuleType + "): device " + alert.DeviceID +
 		" is back to normal (value " + strconv.FormatFloat(alert.Value, 'f', 2, 64) +
 		" vs threshold " + strconv.FormatFloat(alert.Threshold, 'f', 2, 64) + ")"
-	e.Notifier.Notify(ctx, pr.NotificationChannelIDs, title, body, "resolved")
+	e.Notifier.NotifyWithSubject(ctx, pr.NotificationChannelIDs, e.subjectFor(ctx, alert.DeviceID), title, body, "resolved")
+}
+
+// subjectFor resolves the Subject (device name + tags) for a breaching
+// rule's device, so Notify can pass real subject identity through to the
+// notification providers ported from Uptime Kuma that expect it (see
+// Subject in notify.go). Every lookup here is best-effort: a DB error or an
+// unresolvable device yields a partially- or fully-empty Subject rather
+// than blocking the notification, since providers already fall back to the
+// alert title when Subject.Name is empty.
+func (e *Evaluator) subjectFor(ctx context.Context, deviceID string) Subject {
+	subject := Subject{Type: "device", ID: deviceID}
+	if deviceID == "" {
+		return subject
+	}
+	subject.Name = e.Repo.DeviceName(ctx, deviceID)
+	tagRepo := tags.Repository{DB: e.Repo.DB}
+	if ts, err := tagRepo.ForSubject(ctx, "device", deviceID); err == nil {
+		for _, t := range ts {
+			subject.Tags = append(subject.Tags, t.Name)
+		}
+	}
+	return subject
 }
 
 // latestSamples returns the most recent sample per subject id for one metric

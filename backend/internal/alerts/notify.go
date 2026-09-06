@@ -29,9 +29,43 @@ type Notifier struct {
 	Client *http.Client
 }
 
+// Subject describes the device/OLT (etc.) a breaching rule fired on, so
+// providers that build their own correlation key, tag list, or per-monitor
+// display name (Alerta, Squadcast, PagerTree, Splunk, Stackfield, Feishu,
+// Home Assistant -- ported from Uptime Kuma providers that receive the full
+// monitor object) can use the real subject instead of falling back to the
+// alert's rule title. All fields are optional: a zero-value Subject makes
+// every one of those providers fall back to title exactly as before this
+// existed, so passing an empty Subject is always safe.
+type Subject struct {
+	Type string   // "device" (only subject type alert rules support today)
+	ID   string   // subject id (alert.DeviceID)
+	Name string   // device display name, when resolvable
+	Tags []string // tag names currently assigned to the subject
+}
+
+// displayName returns the subject's device name, falling back to the alert
+// title when the subject is empty/unresolved -- the same fallback every
+// affected provider used before Subject existed.
+func (s Subject) displayName(fallbackTitle string) string {
+	if s.Name != "" {
+		return s.Name
+	}
+	return fallbackTitle
+}
+
 // Notify sends a human-readable alert message to every enabled channel named
-// in channelIDs.
+// in channelIDs. Equivalent to NotifyWithSubject with a zero-value Subject --
+// kept for any future caller that has no subject to report.
 func (n Notifier) Notify(ctx context.Context, channelIDs []int64, title, body string, severity string) {
+	n.NotifyWithSubject(ctx, channelIDs, Subject{}, title, body, severity)
+}
+
+// NotifyWithSubject is Notify plus the breaching rule's subject (device id/
+// name/tags), letting providers ported from Uptime Kuma build the same
+// per-monitor fields (name, tags, correlation key) Kuma's own notification
+// providers receive from the full monitor object.
+func (n Notifier) NotifyWithSubject(ctx context.Context, channelIDs []int64, subject Subject, title, body string, severity string) {
 	if n.Repo.DB == nil || len(channelIDs) == 0 {
 		return
 	}
@@ -52,11 +86,11 @@ func (n Notifier) Notify(ctx context.Context, channelIDs []int64, title, body st
 		if !want[ch.ID] || !ch.Enabled {
 			continue
 		}
-		go n.dispatch(client, ch, title, body, severity)
+		go n.dispatch(client, ch, subject, title, body, severity)
 	}
 }
 
-func (n Notifier) dispatch(client *http.Client, ch PersistedChannel, title, body, severity string) {
+func (n Notifier) dispatch(client *http.Client, ch PersistedChannel, subject Subject, title, body, severity string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 	message := fmt.Sprintf("[%s] %s\n%s", strings.ToUpper(severity), title, body)
@@ -98,21 +132,21 @@ func (n Notifier) dispatch(client *http.Client, ch PersistedChannel, title, body
 	case "line":
 		err = sendLine(ctx, client, ch, title, message, severity)
 	case "alerta":
-		err = sendAlerta(ctx, client, ch, title, message, severity)
+		err = sendAlerta(ctx, client, ch, subject, title, message, severity)
 	case "squadcast":
-		err = sendSquadcast(ctx, client, ch, title, message, severity)
+		err = sendSquadcast(ctx, client, ch, subject, title, message, severity)
 	case "pagertree":
-		err = sendPagerTree(ctx, client, ch, title, message, severity)
+		err = sendPagerTree(ctx, client, ch, subject, title, message, severity)
 	case "splunk":
-		err = sendSplunk(ctx, client, ch, title, body, severity)
+		err = sendSplunk(ctx, client, ch, subject, title, body, severity)
 	case "stackfield":
-		err = sendStackfield(ctx, client, ch, title, body, severity)
+		err = sendStackfield(ctx, client, ch, subject, title, body, severity)
 	case "wecom":
 		err = sendWeCom(ctx, client, ch, severity, message)
 	case "feishu":
-		err = sendFeishu(ctx, client, ch, title, body, severity)
+		err = sendFeishu(ctx, client, ch, subject, title, body, severity)
 	case "home_assistant":
-		err = sendHomeAssistant(ctx, client, ch, title, message, severity)
+		err = sendHomeAssistant(ctx, client, ch, subject, title, message, severity)
 	case "rocket_chat":
 		err = sendRocketChat(ctx, client, ch, message, severity)
 	case "dingding":
@@ -731,16 +765,18 @@ func sendLine(ctx context.Context, client *http.Client, ch PersistedChannel, tit
 // breach severity), recover_state (optional, default "cleared", used for
 // the resolved severity).
 //
-// RoutingNMS does not plumb the breaching rule's subject type/name down to
-// the notifier (Notify only carries title/body/severity), so the "event",
-// "group" and "resource" fields below use the alert title in place of
-// Kuma's per-monitor-type subject description.
-func sendAlerta(ctx context.Context, client *http.Client, ch PersistedChannel, title, message, severity string) error {
+// Uses the breaching rule's Subject (device name + tags) for the "event",
+// "group" and "resource" fields when resolvable, matching Kuma's per-monitor
+// subject description; falls back to the alert title when the subject is
+// empty, exactly as before Subject existed. The subject's own tags are
+// appended to Alerta's tags list alongside the fixed "routingnms" tag.
+func sendAlerta(ctx context.Context, client *http.Client, ch PersistedChannel, subject Subject, title, message, severity string) error {
 	apiEndpoint := cfgString(ch.Config, "api_endpoint")
 	apiKey := cfgString(ch.Config, "api_key")
 	if apiEndpoint == "" || apiKey == "" {
 		return fmt.Errorf("api_endpoint and api_key are required")
 	}
+	name := subject.displayName(title)
 	down := severity != "resolved"
 	alertSeverity := cfgString(ch.Config, "alert_state")
 	if alertSeverity == "" {
@@ -752,23 +788,24 @@ func sendAlerta(ctx context.Context, client *http.Client, ch PersistedChannel, t
 			alertSeverity = "cleared"
 		}
 	}
-	text := fmt.Sprintf("Service %s is down.", title)
+	text := fmt.Sprintf("Service %s is down.", name)
 	if !down {
-		text = fmt.Sprintf("Service %s is up.", title)
+		text = fmt.Sprintf("Service %s is up.", name)
 	}
+	tags := append([]string{"routingnms"}, subject.Tags...)
 	payload := map[string]any{
 		"environment": cfgString(ch.Config, "environment"),
 		"severity":    alertSeverity,
 		"correlate":   []string{"service_up", "service_down"},
 		"service":     []string{"RoutingNMS"},
 		"value":       "Timeout",
-		"tags":        []string{"routingnms"},
+		"tags":        tags,
 		"attributes":  map[string]any{},
 		"origin":      "routingnms",
 		"type":        "exceptionAlert",
-		"event":       title,
-		"group":       "routingnms-" + title,
-		"resource":    title,
+		"event":       name,
+		"group":       "routingnms-" + name,
+		"resource":    name,
 		"text":        text,
 	}
 	_ = message
@@ -783,17 +820,19 @@ func sendAlerta(ctx context.Context, client *http.Client, ch PersistedChannel, t
 // sendSquadcast posts to a Squadcast webhook, ported from Uptime Kuma's
 // Squadcast notification provider. Config: webhook_url.
 //
-// Simplification: Kuma's Squadcast provider also builds an "AlertAddress"
-// tag from monitor-type-specific hostname/port/url data and copies the
-// monitor's user-defined tags into the payload's tags map. Notify's call
-// site (evaluator.go) only has the rule title/body/severity available --
-// not the breaching subject's tags or connection details -- so the tags
-// map below is left empty rather than adding new plumbing just for this.
-func sendSquadcast(ctx context.Context, client *http.Client, ch PersistedChannel, title, message, severity string) error {
+// Copies the breaching subject's tags into the payload's tags map (Kuma
+// copies the monitor's user-defined tags the same way) and uses the
+// subject's device name in place of the alert title when resolvable.
+// Simplification kept from before: Kuma also builds an "AlertAddress" tag
+// from monitor-type-specific hostname/port/url data, which RoutingNMS has no
+// single equivalent for across its monitor types, so that one tag is still
+// omitted.
+func sendSquadcast(ctx context.Context, client *http.Client, ch PersistedChannel, subject Subject, title, message, severity string) error {
 	webhookURL := cfgString(ch.Config, "webhook_url")
 	if webhookURL == "" {
 		return fmt.Errorf("webhook_url is required")
 	}
+	name := subject.displayName(title)
 	down := severity != "resolved"
 	status := "resolve"
 	verb := "UP"
@@ -801,12 +840,16 @@ func sendSquadcast(ctx context.Context, client *http.Client, ch PersistedChannel
 		status = "trigger"
 		verb = "DOWN"
 	}
+	tags := map[string]any{}
+	for _, t := range subject.Tags {
+		tags[t] = true
+	}
 	payload := map[string]any{
-		"message":     fmt.Sprintf("%s is %s", title, verb),
+		"message":     fmt.Sprintf("%s is %s", name, verb),
 		"description": message,
-		"tags":        map[string]any{},
+		"tags":        tags,
 		"status":      status,
-		"event_id":    title,
+		"event_id":    name,
 		"source":      "routingnms",
 	}
 	bodyBytes, err := json.Marshal(payload)
@@ -819,18 +862,19 @@ func sendSquadcast(ctx context.Context, client *http.Client, ch PersistedChannel
 // sendPagerTree posts to a PagerTree integration URL, ported from Uptime
 // Kuma's PagerTree notification provider. Config: integration_url, urgency
 // (optional).
-func sendPagerTree(ctx context.Context, client *http.Client, ch PersistedChannel, title, message, severity string) error {
+func sendPagerTree(ctx context.Context, client *http.Client, ch PersistedChannel, subject Subject, title, message, severity string) error {
 	integrationURL := cfgString(ch.Config, "integration_url")
 	if integrationURL == "" {
 		return fmt.Errorf("integration_url is required")
 	}
+	name := subject.displayName(title)
 	down := severity != "resolved"
 	payload := map[string]any{
-		"id": title,
+		"id": name,
 	}
 	if down {
 		payload["event_type"] = "create"
-		payload["title"] = fmt.Sprintf("RoutingNMS Monitor %q is DOWN", title)
+		payload["title"] = fmt.Sprintf("RoutingNMS Monitor %q is DOWN", name)
 	} else {
 		payload["event_type"] = "resolve"
 	}
@@ -851,15 +895,16 @@ func sendPagerTree(ctx context.Context, client *http.Client, ch PersistedChannel
 // message_type), auto_resolve (optional; if unset/"0", a resolved event is
 // not sent at all -- "no action required", matching Kuma).
 //
-// RoutingNMS does not plumb the breaching rule's subject name down to the
-// notifier (Notify only carries title/body/severity), so the alert title is
-// used in place of Kuma's per-monitor subject, matching the same convention
-// already used by sendAlerta/sendSquadcast/sendPagerTree above.
-func sendSplunk(ctx context.Context, client *http.Client, ch PersistedChannel, title, body, severity string) error {
+// Uses the breaching subject's device name in place of Kuma's per-monitor
+// subject when resolvable, falling back to the alert title otherwise --
+// matching the same convention used by sendAlerta/sendSquadcast/
+// sendPagerTree above.
+func sendSplunk(ctx context.Context, client *http.Client, ch PersistedChannel, subject Subject, title, body, severity string) error {
 	restURL := cfgString(ch.Config, "rest_url")
 	if restURL == "" {
 		return fmt.Errorf("rest_url is required")
 	}
+	name := subject.displayName(title)
 	routingKey := cfgString(ch.Config, "routing_key")
 	down := severity != "resolved"
 	var messageType string
@@ -878,10 +923,10 @@ func sendSplunk(ctx context.Context, client *http.Client, ch PersistedChannel, t
 	}
 	payload := map[string]any{
 		"message_type":        messageType,
-		"state_message":       fmt.Sprintf("[%s] [%s] %s", title, title, body),
-		"entity_display_name": fmt.Sprintf("RoutingNMS Alert: %s", title),
+		"state_message":       fmt.Sprintf("[%s] [%s] %s", name, name, body),
+		"entity_display_name": fmt.Sprintf("RoutingNMS Alert: %s", name),
 		"routing_key":         routingKey,
-		"entity_id":           fmt.Sprintf("RoutingNMS/%s", title),
+		"entity_id":           fmt.Sprintf("RoutingNMS/%s", name),
 	}
 	bodyBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -893,13 +938,11 @@ func sendSplunk(ctx context.Context, client *http.Client, ch PersistedChannel, t
 // sendStackfield posts to a Stackfield incoming webhook, ported from Uptime
 // Kuma's Stackfield notification provider. Config: webhook_url.
 //
-// Simplification: Kuma's Stackfield provider also includes the breaching
-// monitor's name as a bolded subject line. Notify's call site (evaluator.go)
-// has no dedicated subject field available here, so that line is omitted
-// entirely rather than substituting the alert title, matching the same
-// "no baseURL/monitor-link concept" simplification already used by
-// sendGoogleChat/sendMattermost above.
-func sendStackfield(ctx context.Context, client *http.Client, ch PersistedChannel, title, body, severity string) error {
+// Includes the breaching subject's device name as a bolded subject line,
+// matching Kuma's Stackfield provider, when the subject resolves; omitted
+// entirely otherwise (unchanged from before Subject existed, since the
+// alert title was never a good substitute for a device name here).
+func sendStackfield(ctx context.Context, client *http.Client, ch PersistedChannel, subject Subject, title, body, severity string) error {
 	webhookURL := cfgString(ch.Config, "webhook_url")
 	if webhookURL == "" {
 		return fmt.Errorf("webhook_url is required")
@@ -907,6 +950,9 @@ func sendStackfield(ctx context.Context, client *http.Client, ch PersistedChanne
 	_ = title
 	_ = severity
 	text := fmt.Sprintf("+RoutingNMS Alert+\n%s", body)
+	if subject.Name != "" {
+		text = fmt.Sprintf("+RoutingNMS Alert: %s+\n%s", subject.Name, body)
+	}
 	payload := map[string]any{"Title": text}
 	bodyBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -943,14 +989,15 @@ func sendWeCom(ctx context.Context, client *http.Client, ch PersistedChannel, se
 // sendFeishu posts to a Feishu (Lark) custom bot webhook, ported from Uptime
 // Kuma's Feishu notification provider. Config: webhook_url.
 //
-// RoutingNMS does not plumb the breaching rule's subject name down to the
-// notifier, so the alert title stands in for Kuma's per-monitor subject,
-// matching the convention already used by sendAlerta/sendSquadcast above.
-func sendFeishu(ctx context.Context, client *http.Client, ch PersistedChannel, title, body, severity string) error {
+// Uses the breaching subject's device name in place of Kuma's per-monitor
+// subject when resolvable, falling back to the alert title otherwise --
+// matching the convention used by sendAlerta/sendSquadcast above.
+func sendFeishu(ctx context.Context, client *http.Client, ch PersistedChannel, subject Subject, title, body, severity string) error {
 	webhookURL := cfgString(ch.Config, "webhook_url")
 	if webhookURL == "" {
 		return fmt.Errorf("webhook_url is required")
 	}
+	name := subject.displayName(title)
 	tag := "[Down]"
 	if severity == "resolved" {
 		tag = "[Up]"
@@ -960,7 +1007,7 @@ func sendFeishu(ctx context.Context, client *http.Client, ch PersistedChannel, t
 		"content": map[string]any{
 			"post": map[string]any{
 				"zh_cn": map[string]any{
-					"title": fmt.Sprintf("RoutingNMS Alert: %s %s", tag, title),
+					"title": fmt.Sprintf("RoutingNMS Alert: %s %s", tag, name),
 					"content": [][]map[string]any{
 						{{"tag": "text", "text": fmt.Sprintf("%s %s", tag, body)}},
 					},
@@ -979,11 +1026,10 @@ func sendFeishu(ctx context.Context, client *http.Client, ch PersistedChannel, t
 // Uptime Kuma's Home Assistant notification provider. Config: base_url,
 // long_lived_token, notification_service (optional, default "notify").
 //
-// RoutingNMS does not plumb the breaching rule's subject name down to the
-// notifier, so the alert title stands in for Kuma's per-monitor subject in
-// the "data.name" field, matching the convention already used by
-// sendAlerta/sendSquadcast above.
-func sendHomeAssistant(ctx context.Context, client *http.Client, ch PersistedChannel, title, message, severity string) error {
+// Uses the breaching subject's device name in the "data.name" field when
+// resolvable, falling back to the alert title otherwise -- matching the
+// convention used by sendAlerta/sendSquadcast above.
+func sendHomeAssistant(ctx context.Context, client *http.Client, ch PersistedChannel, subject Subject, title, message, severity string) error {
 	baseURL := strings.TrimRight(cfgString(ch.Config, "base_url"), "/")
 	token := cfgString(ch.Config, "long_lived_token")
 	if baseURL == "" || token == "" {
@@ -999,7 +1045,7 @@ func sendHomeAssistant(ctx context.Context, client *http.Client, ch PersistedCha
 	}
 	if service != "persistent_notification" {
 		payload["data"] = map[string]any{
-			"name":   title,
+			"name":   subject.displayName(title),
 			"status": severity,
 		}
 	}
