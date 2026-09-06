@@ -15,6 +15,7 @@ import (
 // EnabledDevice is the subset of devices the poller iterates.
 type EnabledDevice struct {
 	ID              string
+	OrganizationID  string
 	Hostname        string
 	RecordType      string
 	ResolverServer  string
@@ -33,7 +34,7 @@ func (r Repository) ListEnabled(ctx context.Context) ([]EnabledDevice, error) {
 	if r.DB == nil {
 		return nil, fmt.Errorf("dnscheck repository is not initialized")
 	}
-	rows, err := r.DB.Query(ctx, `SELECT id,dns_hostname,dns_record_type,dns_resolver_server,dns_expected_answer,dns_interval_seconds
+	rows, err := r.DB.Query(ctx, `SELECT id,organization_id,dns_hostname,dns_record_type,dns_resolver_server,dns_expected_answer,dns_interval_seconds
 		FROM devices WHERE enabled=true AND dns_enabled=true ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -42,7 +43,7 @@ func (r Repository) ListEnabled(ctx context.Context) ([]EnabledDevice, error) {
 	out := []EnabledDevice{}
 	for rows.Next() {
 		var d EnabledDevice
-		if err := rows.Scan(&d.ID, &d.Hostname, &d.RecordType, &d.ResolverServer, &d.ExpectedAnswer, &d.IntervalSeconds); err != nil {
+		if err := rows.Scan(&d.ID, &d.OrganizationID, &d.Hostname, &d.RecordType, &d.ResolverServer, &d.ExpectedAnswer, &d.IntervalSeconds); err != nil {
 			return nil, err
 		}
 		out = append(out, d)
@@ -119,8 +120,8 @@ func (p *Poller) pollOnce(ctx context.Context) {
 			up = 1
 		}
 		_ = p.metrics.RecordBatch(ctx, []metricsdb.Sample{
-			{SubjectType: "device", SubjectID: d.ID, MetricName: "dns_up", Value: up, RecordedAt: now},
-			{SubjectType: "device", SubjectID: d.ID, MetricName: "dns_latency_ms", Value: res.LatencyMS, RecordedAt: now},
+			{SubjectType: "device", SubjectID: d.ID, TenantID: d.OrganizationID, MetricName: "dns_up", Value: up, RecordedAt: now},
+			{SubjectType: "device", SubjectID: d.ID, TenantID: d.OrganizationID, MetricName: "dns_latency_ms", Value: res.LatencyMS, RecordedAt: now},
 		})
 	}
 }

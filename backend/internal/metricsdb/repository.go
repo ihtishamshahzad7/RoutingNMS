@@ -22,9 +22,17 @@ type Repository struct{ DB *pgxpool.Pool }
 type Sample struct {
 	SubjectType string
 	SubjectID   string
-	MetricName  string
-	Value       float64
-	RecordedAt  time.Time
+	// TenantID scopes this sample to an organization (tenants.id / devices.
+	// organization_id), so per-tenant data-retention cleanup (see
+	// internal/retention) can delete only that tenant's rows. Left "" for
+	// samples whose owning device/OLT couldn't be resolved to a tenant
+	// (e.g. today's OLT/ONU/PON hierarchy, which predates multi-tenancy) --
+	// those rows are swept by the retention job's fallback default-retention
+	// pass instead of a tenant-specific one.
+	TenantID   string
+	MetricName string
+	Value      float64
+	RecordedAt time.Time
 }
 
 // Point is one value in a returned time series.
@@ -62,8 +70,8 @@ func (r Repository) RecordBatch(ctx context.Context, samples []Sample) error {
 		if ts.IsZero() {
 			ts = time.Now().UTC()
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO metric_samples (subject_type,subject_id,metric_name,value,recorded_at) VALUES ($1,$2,$3,$4,$5)`,
-			s.SubjectType, s.SubjectID, s.MetricName, s.Value, ts); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO metric_samples (subject_type,subject_id,tenant_id,metric_name,value,recorded_at) VALUES ($1,$2,$3,$4,$5,$6)`,
+			s.SubjectType, s.SubjectID, s.TenantID, s.MetricName, s.Value, ts); err != nil {
 			return err
 		}
 	}
@@ -110,6 +118,23 @@ func (r Repository) PruneOlderThan(ctx context.Context, age time.Duration) (int6
 		return 0, fmt.Errorf("metricsdb repository is not initialized")
 	}
 	tag, err := r.DB.Exec(ctx, `DELETE FROM metric_samples WHERE recorded_at < $1`, time.Now().Add(-age))
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// DeleteOlderThan deletes one tenant's metric_samples rows recorded before
+// cutoff -- the per-tenant equivalent of PruneOlderThan, backing the
+// configurable data-retention job (internal/retention). Uses the
+// (tenant_id, recorded_at) index added by migration 0038 so the delete
+// stays an index range scan rather than a full table scan even as
+// metric_samples grows large.
+func (r Repository) DeleteOlderThan(ctx context.Context, tenantID string, cutoff time.Time) (int64, error) {
+	if r.DB == nil {
+		return 0, fmt.Errorf("metricsdb repository is not initialized")
+	}
+	tag, err := r.DB.Exec(ctx, `DELETE FROM metric_samples WHERE tenant_id=$1 AND recorded_at < $2`, tenantID, cutoff)
 	if err != nil {
 		return 0, err
 	}

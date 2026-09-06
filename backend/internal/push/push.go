@@ -113,7 +113,7 @@ func (s Sweeper) sweepOnce(ctx context.Context) {
 			up = 1
 		}
 		samples = append(samples, metricsdb.Sample{
-			SubjectType: "device", SubjectID: d.ID, MetricName: "push_up", Value: up, RecordedAt: now,
+			SubjectType: "device", SubjectID: d.ID, TenantID: d.OrganizationID, MetricName: "push_up", Value: up, RecordedAt: now,
 		})
 	}
 	if len(samples) > 0 {

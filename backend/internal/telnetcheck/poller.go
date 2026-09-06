@@ -14,10 +14,11 @@ import (
 
 // EnabledDevice is the subset of devices the poller iterates.
 type EnabledDevice struct {
-	ID            string
-	Address       string
-	Port          int
-	BannerKeyword string
+	ID             string
+	OrganizationID string
+	Address        string
+	Port           int
+	BannerKeyword  string
 }
 
 // Repository reads the set of Telnet-monitor-enabled devices.
@@ -29,7 +30,7 @@ func (r Repository) ListEnabled(ctx context.Context) ([]EnabledDevice, error) {
 	if r.DB == nil {
 		return nil, fmt.Errorf("telnetcheck repository is not initialized")
 	}
-	rows, err := r.DB.Query(ctx, `SELECT id,address,telnet_port,telnet_banner_keyword FROM devices WHERE enabled=true AND telnet_enabled=true ORDER BY name`)
+	rows, err := r.DB.Query(ctx, `SELECT id,organization_id,address,telnet_port,telnet_banner_keyword FROM devices WHERE enabled=true AND telnet_enabled=true ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -37,7 +38,7 @@ func (r Repository) ListEnabled(ctx context.Context) ([]EnabledDevice, error) {
 	out := []EnabledDevice{}
 	for rows.Next() {
 		var d EnabledDevice
-		if err := rows.Scan(&d.ID, &d.Address, &d.Port, &d.BannerKeyword); err != nil {
+		if err := rows.Scan(&d.ID, &d.OrganizationID, &d.Address, &d.Port, &d.BannerKeyword); err != nil {
 			return nil, err
 		}
 		out = append(out, d)
@@ -106,8 +107,8 @@ func (p *Poller) pollOnce(ctx context.Context) {
 			up = 1
 		}
 		_ = p.metrics.RecordBatch(ctx, []metricsdb.Sample{
-			{SubjectType: "device", SubjectID: d.ID, MetricName: "telnet_up", Value: up, RecordedAt: now},
-			{SubjectType: "device", SubjectID: d.ID, MetricName: "telnet_latency_ms", Value: res.LatencyMS, RecordedAt: now},
+			{SubjectType: "device", SubjectID: d.ID, TenantID: d.OrganizationID, MetricName: "telnet_up", Value: up, RecordedAt: now},
+			{SubjectType: "device", SubjectID: d.ID, TenantID: d.OrganizationID, MetricName: "telnet_latency_ms", Value: res.LatencyMS, RecordedAt: now},
 		})
 	}
 }

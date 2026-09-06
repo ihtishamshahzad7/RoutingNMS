@@ -403,7 +403,7 @@ func (r Repository) ListPushEnabled(ctx context.Context) ([]Record, error) {
 	if r.DB == nil {
 		return nil, fmt.Errorf("device repository is not initialized")
 	}
-	rows, err := r.DB.Query(ctx, `SELECT id,name,push_interval_seconds,push_grace_period_seconds,push_last_seen_at FROM devices WHERE enabled=true AND push_enabled=true ORDER BY name`)
+	rows, err := r.DB.Query(ctx, `SELECT id,organization_id,name,push_interval_seconds,push_grace_period_seconds,push_last_seen_at FROM devices WHERE enabled=true AND push_enabled=true ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -411,7 +411,7 @@ func (r Repository) ListPushEnabled(ctx context.Context) ([]Record, error) {
 	out := []Record{}
 	for rows.Next() {
 		var d Record
-		if err := rows.Scan(&d.ID, &d.Name, &d.PushIntervalSeconds, &d.PushGracePeriodSeconds, &d.PushLastSeenAt); err != nil {
+		if err := rows.Scan(&d.ID, &d.OrganizationID, &d.Name, &d.PushIntervalSeconds, &d.PushGracePeriodSeconds, &d.PushLastSeenAt); err != nil {
 			return nil, err
 		}
 		out = append(out, d)

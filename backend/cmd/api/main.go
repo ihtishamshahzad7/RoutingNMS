@@ -32,6 +32,7 @@ import (
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/ping"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/provisioning"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/push"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/retention"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/sites"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/snmp"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/snmptrap"
@@ -40,6 +41,7 @@ import (
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/syslog"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/tags"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/telnetcheck"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/tenants"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/topolinks"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/topology"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/traceroute"
@@ -160,7 +162,16 @@ func main() {
 		// every poll cycle.
 		deviceMetricsInterval := time.Duration(envInt("DEVICE_METRICS_INTERVAL_SECONDS", 60)) * time.Second
 		go devices.SamplePeriodically(ctx, devices.Repository{DB: db}, metricsdb.Repository{DB: db}, deviceMetricsInterval)
-		go pruneMetricsPeriodically(ctx, db)
+
+		// Configurable per-tenant data retention (ported from Uptime Kuma's
+		// clear-old-data job): once a day, deletes each tenant's
+		// metric_samples rows older than that tenant's own retention period
+		// (default 180 days, GET/PUT via /api/v1/tenants/{id}/retention and
+		// the Settings page; a period < 1 disables cleanup for that tenant
+		// entirely). Supersedes the old fixed 30-day global prune below,
+		// which didn't respect any per-tenant preference.
+		retentionInterval := time.Duration(envInt("DATA_RETENTION_INTERVAL_SECONDS", 24*60*60)) * time.Second
+		go retention.RunPeriodically(ctx, db, retentionInterval)
 
 		// ICMP ping poller (the "pingmonitor" concept): probes every enabled
 		// device that has icmp_enabled=true via the system `ping` binary
@@ -584,6 +595,12 @@ func main() {
 		mux.Handle("GET /api/v1/backup", authHandler.Middleware(backup.ExportAPI{Repos: backupRepos}))
 		mux.Handle("POST /api/v1/backup/import", authHandler.Middleware(backup.ImportAPI{Repos: backupRepos}))
 
+		// Per-tenant data retention (Settings page control backing
+		// internal/retention's background cleanup job).
+		retentionAPI := tenants.RetentionAPI{Repo: tenants.Repository{DB: db}}
+		mux.Handle("GET /api/v1/tenants/{id}/retention", authHandler.Middleware(retentionAPI))
+		mux.Handle("PUT /api/v1/tenants/{id}/retention", authHandler.Middleware(retentionAPI))
+
 		// Sprint 3 — ISP features: physical sites, wireless access points,
 		// and subscriber customer connections (migration 0018). Session-authed
 		// CRUD following the provisioning/templates idiom ({id} path vars).
@@ -768,24 +785,6 @@ func pruneTrapsPeriodically(ctx context.Context, db *pgxpool.Pool) {
 				log.Printf("prune snmp traps: %v", err)
 			} else if n > 0 {
 				log.Printf("pruned %d snmp traps older than %s", n, retention)
-			}
-		}
-	}
-}
-func pruneMetricsPeriodically(ctx context.Context, db *pgxpool.Pool) {
-	ticker := time.NewTicker(6 * time.Hour)
-	defer ticker.Stop()
-	const retention = 30 * 24 * time.Hour
-	repo := metricsdb.Repository{DB: db}
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if n, err := repo.PruneOlderThan(ctx, retention); err != nil {
-				log.Printf("prune metric samples: %v", err)
-			} else if n > 0 {
-				log.Printf("pruned %d metric samples older than %s", n, retention)
 			}
 		}
 	}

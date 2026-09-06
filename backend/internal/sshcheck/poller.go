@@ -14,10 +14,11 @@ import (
 
 // EnabledDevice is the subset of devices the poller iterates.
 type EnabledDevice struct {
-	ID            string
-	Address       string
-	Port          int
-	BannerKeyword string
+	ID             string
+	OrganizationID string
+	Address        string
+	Port           int
+	BannerKeyword  string
 }
 
 // Repository reads the set of SSH-monitor-enabled devices, mirroring
@@ -31,7 +32,7 @@ func (r Repository) ListEnabled(ctx context.Context) ([]EnabledDevice, error) {
 	if r.DB == nil {
 		return nil, fmt.Errorf("sshcheck repository is not initialized")
 	}
-	rows, err := r.DB.Query(ctx, `SELECT id,address,ssh_port,ssh_banner_keyword FROM devices WHERE enabled=true AND ssh_enabled=true ORDER BY name`)
+	rows, err := r.DB.Query(ctx, `SELECT id,organization_id,address,ssh_port,ssh_banner_keyword FROM devices WHERE enabled=true AND ssh_enabled=true ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -39,7 +40,7 @@ func (r Repository) ListEnabled(ctx context.Context) ([]EnabledDevice, error) {
 	out := []EnabledDevice{}
 	for rows.Next() {
 		var d EnabledDevice
-		if err := rows.Scan(&d.ID, &d.Address, &d.Port, &d.BannerKeyword); err != nil {
+		if err := rows.Scan(&d.ID, &d.OrganizationID, &d.Address, &d.Port, &d.BannerKeyword); err != nil {
 			return nil, err
 		}
 		out = append(out, d)
@@ -110,8 +111,8 @@ func (p *Poller) pollOnce(ctx context.Context) {
 			up = 1
 		}
 		_ = p.metrics.RecordBatch(ctx, []metricsdb.Sample{
-			{SubjectType: "device", SubjectID: d.ID, MetricName: "ssh_up", Value: up, RecordedAt: now},
-			{SubjectType: "device", SubjectID: d.ID, MetricName: "ssh_latency_ms", Value: res.LatencyMS, RecordedAt: now},
+			{SubjectType: "device", SubjectID: d.ID, TenantID: d.OrganizationID, MetricName: "ssh_up", Value: up, RecordedAt: now},
+			{SubjectType: "device", SubjectID: d.ID, TenantID: d.OrganizationID, MetricName: "ssh_latency_ms", Value: res.LatencyMS, RecordedAt: now},
 		})
 	}
 }

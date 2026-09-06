@@ -50,8 +50,8 @@ func sampleOnce(ctx context.Context, repo Repository, metrics metricsdb.Reposito
 			up = 1
 		}
 		samples = append(samples,
-			metricsdb.Sample{SubjectType: "device", SubjectID: d.ID, MetricName: "up", Value: up, RecordedAt: now},
-			metricsdb.Sample{SubjectType: "device", SubjectID: d.ID, MetricName: "latency_ms", Value: health.LatencyMS, RecordedAt: now},
+			metricsdb.Sample{SubjectType: "device", SubjectID: d.ID, TenantID: d.OrganizationID, MetricName: "up", Value: up, RecordedAt: now},
+			metricsdb.Sample{SubjectType: "device", SubjectID: d.ID, TenantID: d.OrganizationID, MetricName: "latency_ms", Value: health.LatencyMS, RecordedAt: now},
 		)
 
 		// Optional HTTP(S)+keyword monitor (ported from Uptime Kuma) --
@@ -66,11 +66,11 @@ func sampleOnce(ctx context.Context, repo Repository, metrics metricsdb.Reposito
 				httpUp = 1
 			}
 			samples = append(samples,
-				metricsdb.Sample{SubjectType: "device", SubjectID: d.ID, MetricName: "http_up", Value: httpUp, RecordedAt: now},
-				metricsdb.Sample{SubjectType: "device", SubjectID: d.ID, MetricName: "http_latency_ms", Value: result.LatencyMS, RecordedAt: now},
+				metricsdb.Sample{SubjectType: "device", SubjectID: d.ID, TenantID: d.OrganizationID, MetricName: "http_up", Value: httpUp, RecordedAt: now},
+				metricsdb.Sample{SubjectType: "device", SubjectID: d.ID, TenantID: d.OrganizationID, MetricName: "http_latency_ms", Value: result.LatencyMS, RecordedAt: now},
 			)
 			if result.CertExpiryInDays != nil {
-				samples = append(samples, metricsdb.Sample{SubjectType: "device", SubjectID: d.ID, MetricName: "http_cert_expiry_days", Value: float64(*result.CertExpiryInDays), RecordedAt: now})
+				samples = append(samples, metricsdb.Sample{SubjectType: "device", SubjectID: d.ID, TenantID: d.OrganizationID, MetricName: "http_cert_expiry_days", Value: float64(*result.CertExpiryInDays), RecordedAt: now})
 			}
 		}
 	}

@@ -60,6 +60,7 @@ type ProbeResult struct {
 // IcmpEnabledDevice is the subset of devices the poller iterates.
 type IcmpEnabledDevice struct {
 	ID              string
+	OrganizationID  string
 	Address         string
 	IntervalSeconds int
 	PacketSize      int
@@ -77,7 +78,7 @@ func (r Repository) ListIcmpEnabled(ctx context.Context) ([]IcmpEnabledDevice, e
 	if r.DB == nil {
 		return nil, fmt.Errorf("ping repository is not initialized")
 	}
-	rows, err := r.DB.Query(ctx, `SELECT id,address,icmp_interval_seconds,icmp_packet_size,icmp_count,icmp_retries
+	rows, err := r.DB.Query(ctx, `SELECT id,organization_id,address,icmp_interval_seconds,icmp_packet_size,icmp_count,icmp_retries
 		FROM devices WHERE enabled=true AND icmp_enabled=true ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -86,7 +87,7 @@ func (r Repository) ListIcmpEnabled(ctx context.Context) ([]IcmpEnabledDevice, e
 	out := []IcmpEnabledDevice{}
 	for rows.Next() {
 		var d IcmpEnabledDevice
-		if err := rows.Scan(&d.ID, &d.Address, &d.IntervalSeconds, &d.PacketSize, &d.Count, &d.Retries); err != nil {
+		if err := rows.Scan(&d.ID, &d.OrganizationID, &d.Address, &d.IntervalSeconds, &d.PacketSize, &d.Count, &d.Retries); err != nil {
 			return nil, err
 		}
 		if d.Retries <= 0 {
@@ -254,9 +255,9 @@ func (p *Poller) pollOnce(ctx context.Context) {
 			up = 1
 		}
 		_ = p.metrics.RecordBatch(ctx, []metricsdb.Sample{
-			{SubjectType: "device", SubjectID: d.ID, MetricName: "icmp_loss_pct", Value: res.LossPct, RecordedAt: now},
-			{SubjectType: "device", SubjectID: d.ID, MetricName: "icmp_rtt_ms", Value: res.RTTMs, RecordedAt: now},
-			{SubjectType: "device", SubjectID: d.ID, MetricName: "icmp_reachable", Value: up, RecordedAt: now},
+			{SubjectType: "device", SubjectID: d.ID, TenantID: d.OrganizationID, MetricName: "icmp_loss_pct", Value: res.LossPct, RecordedAt: now},
+			{SubjectType: "device", SubjectID: d.ID, TenantID: d.OrganizationID, MetricName: "icmp_rtt_ms", Value: res.RTTMs, RecordedAt: now},
+			{SubjectType: "device", SubjectID: d.ID, TenantID: d.OrganizationID, MetricName: "icmp_reachable", Value: up, RecordedAt: now},
 		})
 	}
 }

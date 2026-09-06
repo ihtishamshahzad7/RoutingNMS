@@ -58,6 +58,7 @@ type discoveryCache struct {
 	devices   devices.Repository
 	results   map[string]snmp.DiscoveryResult
 	errs      map[string]error
+	orgs      map[string]string
 }
 
 func (c *discoveryCache) get(ctx context.Context, deviceID string) (snmp.DiscoveryResult, error) {
@@ -69,11 +70,19 @@ func (c *discoveryCache) get(ctx context.Context, deviceID string) (snmp.Discove
 		c.errs[deviceID] = err
 		return snmp.DiscoveryResult{}, err
 	}
+	c.orgs[deviceID] = target.OrganizationID
 	snmpTarget := snmp.Target{ID: deviceID, Address: target.Address, Port: target.SNMPPort, Credentials: target.SNMP, Timeout: target.Timeout, Retries: 1}
 	res, derr := c.collector.Discover(ctx, snmpTarget)
 	c.results[deviceID] = res
 	c.errs[deviceID] = derr
 	return res, derr
+}
+
+// tenantOf returns the organization id for a device already resolved through
+// get, or "" if it hasn't been resolved (e.g. discovery failed before the
+// target could be loaded).
+func (c *discoveryCache) tenantOf(deviceID string) string {
+	return c.orgs[deviceID]
 }
 
 // operUp finds the named interface (case-insensitive exact match on
@@ -106,7 +115,7 @@ func (p *Poller) pollOnce(ctx context.Context) {
 		log.Printf("topolinks poller: list links: %v", err)
 		return
 	}
-	cache := &discoveryCache{collector: p.Collector, devices: p.Devices, results: map[string]snmp.DiscoveryResult{}, errs: map[string]error{}}
+	cache := &discoveryCache{collector: p.Collector, devices: p.Devices, results: map[string]snmp.DiscoveryResult{}, errs: map[string]error{}, orgs: map[string]string{}}
 	now := time.Now().UTC()
 	samples := make([]metricsdb.Sample, 0, len(links)*2)
 
@@ -150,12 +159,12 @@ func (p *Poller) pollOnce(ctx context.Context) {
 		if status.Up {
 			upVal = 1
 		}
-		samples = append(samples, metricsdb.Sample{SubjectType: "topology_link", SubjectID: link.ID, MetricName: "port_up", Value: upVal, RecordedAt: now})
+		samples = append(samples, metricsdb.Sample{SubjectType: "topology_link", SubjectID: link.ID, TenantID: cache.tenantOf(link.DeviceAID), MetricName: "port_up", Value: upVal, RecordedAt: now})
 		if status.SideAUp != nil {
-			samples = append(samples, metricsdb.Sample{SubjectType: "device", SubjectID: link.DeviceAID, MetricName: "if_" + sanitizeMetricSuffix(link.InterfaceA) + "_up", Value: boolFloat(*status.SideAUp), RecordedAt: now})
+			samples = append(samples, metricsdb.Sample{SubjectType: "device", SubjectID: link.DeviceAID, TenantID: cache.tenantOf(link.DeviceAID), MetricName: "if_" + sanitizeMetricSuffix(link.InterfaceA) + "_up", Value: boolFloat(*status.SideAUp), RecordedAt: now})
 		}
 		if status.SideBUp != nil {
-			samples = append(samples, metricsdb.Sample{SubjectType: "device", SubjectID: link.DeviceBID, MetricName: "if_" + sanitizeMetricSuffix(link.InterfaceB) + "_up", Value: boolFloat(*status.SideBUp), RecordedAt: now})
+			samples = append(samples, metricsdb.Sample{SubjectType: "device", SubjectID: link.DeviceBID, TenantID: cache.tenantOf(link.DeviceBID), MetricName: "if_" + sanitizeMetricSuffix(link.InterfaceB) + "_up", Value: boolFloat(*status.SideBUp), RecordedAt: now})
 		}
 	}
 
