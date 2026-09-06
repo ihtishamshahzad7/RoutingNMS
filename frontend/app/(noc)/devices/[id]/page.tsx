@@ -6,7 +6,9 @@ import { FormEvent, useEffect, useState } from "react";
 import { ApiError, apiFetch } from "../../../../lib/api";
 import { MetricChart } from "../../../../components/metric-chart";
 
-type Device={id:string;name:string;address:string;deviceType:string;vendor?:string;serialNumber?:string;enabled:boolean;snmpEnabled:boolean;snmpVersion:string;snmpPort:number;snmpConfigured:boolean;provisioningTemplateId?:number|null;lastProvisionedAt?:string;httpCheckEnabled:boolean;httpUrl?:string;httpExpectedStatus:number;httpKeyword?:string;httpTimeoutMs:number;icmpEnabled:boolean;icmpIntervalSeconds:number;icmpPacketSize:number;icmpCount:number;icmpRetries:number;dnsEnabled:boolean;dnsHostname?:string;dnsRecordType:string;dnsResolverServer?:string;dnsExpectedAnswer?:string;dnsIntervalSeconds:number;pushEnabled:boolean;pushToken?:string;pushIntervalSeconds:number;pushGracePeriodSeconds:number;pushLastSeenAt?:string;pushLastStatus?:string;pushLastMessage?:string;sshEnabled:boolean;sshPort:number;sshBannerKeyword?:string;sshTimeoutMs:number;sshIntervalSeconds:number;telnetEnabled:boolean;telnetPort:number;telnetBannerKeyword?:string;telnetTimeoutMs:number;telnetIntervalSeconds:number};
+type CertChainLink={certType:string;subject:string;issuer:string;validFrom:string;validTo:string;fingerprintSha256:string};
+type CertInfo={subject:string;issuer:string;validFrom:string;validTo:string;fingerprintSha256:string;daysRemaining:number;chain:CertChainLink[]};
+type Device={id:string;name:string;address:string;deviceType:string;vendor?:string;serialNumber?:string;enabled:boolean;snmpEnabled:boolean;snmpVersion:string;snmpPort:number;snmpConfigured:boolean;provisioningTemplateId?:number|null;lastProvisionedAt?:string;httpCheckEnabled:boolean;httpUrl?:string;httpExpectedStatus:number;httpKeyword?:string;httpTimeoutMs:number;certInfo?:CertInfo|null;icmpEnabled:boolean;icmpIntervalSeconds:number;icmpPacketSize:number;icmpCount:number;icmpRetries:number;dnsEnabled:boolean;dnsHostname?:string;dnsRecordType:string;dnsResolverServer?:string;dnsExpectedAnswer?:string;dnsIntervalSeconds:number;pushEnabled:boolean;pushToken?:string;pushIntervalSeconds:number;pushGracePeriodSeconds:number;pushLastSeenAt?:string;pushLastStatus?:string;pushLastMessage?:string;sshEnabled:boolean;sshPort:number;sshBannerKeyword?:string;sshTimeoutMs:number;sshIntervalSeconds:number;telnetEnabled:boolean;telnetPort:number;telnetBannerKeyword?:string;telnetTimeoutMs:number;telnetIntervalSeconds:number};
 type DNSLive={live:{resolved:boolean;answers?:string[];latencyMs:number;expectedMatch?:boolean|null;error?:string}};
 type ReachLive={live:{reachable:boolean;banner?:string;latencyMs:number;bannerMatched?:boolean|null;error?:string}};
 type ProvTemplate={id:number;name:string;scriptBody:string};
@@ -109,6 +111,20 @@ export default function DeviceDetailsPage(){
   </form>
   {device.httpCheckEnabled&&<div className="mt-6 grid gap-6 sm:grid-cols-2"><MetricChart subjectType="device" subjectId={id} metric="http_latency_ms" label="HTTP latency" unit="ms" /><MetricChart subjectType="device" subjectId={id} metric="http_up" label="HTTP reachability (1=up, 0=down)" formatValue={v=>v.toFixed(0)} /></div>}
  </section>
+ {device.httpCheckEnabled&&device.certInfo&&(()=>{const ci=device.certInfo!;const daysColor=ci.daysRemaining<7?"text-red-400":ci.daysRemaining<30?"text-amber-400":"text-emerald-400";const fmt=(s:string)=>{try{return new Date(s).toLocaleDateString(undefined,{year:"numeric",month:"short",day:"numeric"})}catch{return s}};return(
+ <section className={`mb-6 ${card}`}>
+  <div className="mb-4"><h2 className="font-semibold">Certificate Info</h2><p className="mt-1 text-xs text-slate-500">TLS certificate details captured from the most recent HTTP(S) check, ported from Uptime Kuma&apos;s monitor certificate panel.</p></div>
+  <div className="grid gap-4 sm:grid-cols-2">
+   <div><div className="text-xs uppercase text-slate-500">Subject</div><div className="mt-1 text-sm">{ci.subject}</div></div>
+   <div><div className="text-xs uppercase text-slate-500">Issuer</div><div className="mt-1 text-sm">{ci.issuer}</div></div>
+   <div><div className="text-xs uppercase text-slate-500">Valid from</div><div className="mt-1 text-sm">{fmt(ci.validFrom)}</div></div>
+   <div><div className="text-xs uppercase text-slate-500">Valid to</div><div className="mt-1 text-sm">{fmt(ci.validTo)}</div></div>
+   <div><div className="text-xs uppercase text-slate-500">Days remaining</div><div className={`mt-1 text-sm font-semibold ${daysColor}`}>{ci.daysRemaining}d</div></div>
+   <div><div className="text-xs uppercase text-slate-500">Fingerprint (SHA-256)</div><div className="mt-1 truncate font-mono text-xs" title={ci.fingerprintSha256}>{ci.fingerprintSha256.slice(0,16)}…</div></div>
+  </div>
+  {ci.chain?.length>0&&<div className="mt-4"><div className="mb-2 text-xs uppercase text-slate-500">Chain</div><ul className="space-y-1 text-sm">{ci.chain.map((c,i)=>(<li key={i} className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2"><span className="text-slate-500">{c.certType}</span> — {c.subject}</li>))}</ul></div>}
+ </section>
+ )})()}
  <section className={`mb-6 ${card}`}>
   <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">ICMP Ping</h2><p className="mt-1 text-xs text-slate-500">Round-trip time + packet loss from the periodic ICMP poller. Down/recovery here drives Discord/webhook/email alerts and the browser sound alert.</p></div><button onClick={pingNow} disabled={pingState.probing} className="rounded-lg border border-cyan-700 bg-cyan-950/40 px-3 py-2 text-xs text-cyan-300 hover:bg-cyan-900/40 disabled:opacity-50">{pingState.probing?"Pinging…":"Ping now"}</button></div>
   <form onSubmit={saveICMPCheck} className="mt-4 grid gap-4 rounded-lg border border-slate-800 bg-slate-950 p-4 sm:grid-cols-4">
