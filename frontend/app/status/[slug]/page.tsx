@@ -9,7 +9,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 
 type ItemStatus = {
-  subjectType: "device" | "olt";
+  subjectType: "device" | "olt" | "devicegroup";
   subjectId: string;
   label: string;
   status: "up" | "down" | "degraded" | "unknown";

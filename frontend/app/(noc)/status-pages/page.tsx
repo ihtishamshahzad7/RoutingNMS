@@ -15,9 +15,10 @@ type StatusPage = {
   showCertificateExpiry: boolean;
   footerText: string;
 };
-type Item = { id?: number; subjectType: "device" | "olt"; subjectId: string; label: string; position: number };
+type Item = { id?: number; subjectType: "device" | "olt" | "devicegroup"; subjectId: string; label: string; position: number };
 type Device = { id: string; name: string; deviceType: string };
 type Olt = { id: string; name: string };
+type DeviceGroupOption = { id: number; name: string };
 
 const ORG = "tenant-1";
 
@@ -29,6 +30,7 @@ export default function StatusPagesAdmin() {
   const [items, setItems] = useState<Item[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
   const [olts, setOlts] = useState<Olt[]>([]);
+  const [deviceGroups, setDeviceGroups] = useState<DeviceGroupOption[]>([]);
   const [saving, setSaving] = useState(false);
 
   async function load() {
@@ -45,6 +47,7 @@ export default function StatusPagesAdmin() {
   useEffect(() => {
     apiFetch<Device[]>(`/devices?organizationId=${ORG}`).then(setDevices).catch(() => {});
     apiFetch<{ id: string; name: string }[]>("/olts").then(setOlts).catch(() => {});
+    apiFetch<DeviceGroupOption[]>(`/device-groups?tenantId=${ORG}`).then(setDeviceGroups).catch(() => {});
   }, []);
 
   async function openEditor(p: StatusPage | null) {
@@ -102,7 +105,7 @@ export default function StatusPagesAdmin() {
     }
   }
 
-  function addItem(type: "device" | "olt", subjectId: string) {
+  function addItem(type: "device" | "olt" | "devicegroup", subjectId: string) {
     if (!subjectId) return;
     if (items.some(i => i.subjectType === type && i.subjectId === subjectId)) return;
     setItems(prev => [...prev, { subjectType: type, subjectId, label: "", position: prev.length }]);
@@ -189,14 +192,25 @@ export default function StatusPagesAdmin() {
                   <option value="">Add an OLT…</option>
                   {olts.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
                 </Select>
+                <Select className="w-auto" onChange={e => { addItem("devicegroup", e.target.value); e.target.value = ""; }}>
+                  <option value="">Add a device group…</option>
+                  {deviceGroups.map(g => <option key={g.id} value={String(g.id)}>{g.name}</option>)}
+                </Select>
               </div>
+              <p className="mt-2 text-xs text-[#484F58]">A device group shows as one row, aggregated to its worst member's status (down &gt; degraded &gt; up).</p>
               <div className="mt-3 space-y-2">
                 {items.length === 0 && <div className="text-xs text-[#484F58]">No monitors added yet.</div>}
                 {items.map((it, idx) => (
                   <div key={`${it.subjectType}-${it.subjectId}`} className="flex items-center justify-between rounded-[6px] border border-[#21262D] bg-[#0D1117] p-3 text-sm text-[#C9D1D9]">
                     <span>
                       <span className="rounded bg-[#21262D] px-1.5 py-0.5 text-[10px] uppercase text-[#8B949E]">{it.subjectType}</span>
-                      <span className="ml-2">{(it.subjectType === "device" ? devices.find(d => d.id === it.subjectId)?.name : olts.find(o => o.id === it.subjectId)?.name) ?? it.subjectId}</span>
+                      <span className="ml-2">
+                        {(it.subjectType === "device"
+                          ? devices.find(d => d.id === it.subjectId)?.name
+                          : it.subjectType === "olt"
+                          ? olts.find(o => o.id === it.subjectId)?.name
+                          : deviceGroups.find(g => String(g.id) === it.subjectId)?.name) ?? it.subjectId}
+                      </span>
                     </span>
                     <span className="flex gap-1">
                       <Button type="button" onClick={() => moveItem(idx, -1)}>↑</Button>

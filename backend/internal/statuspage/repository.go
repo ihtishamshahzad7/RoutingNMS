@@ -30,10 +30,13 @@ type Page struct {
 type Item struct {
 	ID           int64  `json:"id"`
 	StatusPageID int64  `json:"statusPageId"`
-	SubjectType  string `json:"subjectType"` // "device" | "olt"
-	SubjectID    string `json:"subjectId"`
-	Label        string `json:"label"`
-	Position     int    `json:"position"`
+	SubjectType  string `json:"subjectType"` // "device" | "olt" | "devicegroup"
+	// SubjectID is the subject's own id, as text -- for "devicegroup" this
+	// is a device_groups.id (an integer, still carried as text like every
+	// other subject_id column in this codebase).
+	SubjectID string `json:"subjectId"`
+	Label     string `json:"label"`
+	Position  int    `json:"position"`
 }
 
 type Repository struct{ DB *pgxpool.Pool }
@@ -171,8 +174,8 @@ func (r Repository) ReplaceItems(ctx context.Context, pageID int64, items []Item
 		return err
 	}
 	for i, it := range items {
-		if it.SubjectType != "device" && it.SubjectType != "olt" {
-			return fmt.Errorf("item %d: subjectType must be \"device\" or \"olt\"", i)
+		if it.SubjectType != "device" && it.SubjectType != "olt" && it.SubjectType != "devicegroup" {
+			return fmt.Errorf("item %d: subjectType must be \"device\", \"olt\" or \"devicegroup\"", i)
 		}
 		if strings.TrimSpace(it.SubjectID) == "" {
 			return fmt.Errorf("item %d: subjectId is required", i)
