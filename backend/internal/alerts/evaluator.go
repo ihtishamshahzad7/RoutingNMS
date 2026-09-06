@@ -101,7 +101,7 @@ func (e *Evaluator) evaluateOnce(ctx context.Context) int {
 	}()
 
 	started := time.Now().UTC()
-	rules, err := e.Repo.ListRules(ctx)
+	rules, err := e.Repo.ListRules(ctx, "") // "" = every tenant's rules, unchanged evaluation scope
 	if err != nil {
 		log.Printf("alerts evaluator: list rules: %v", err)
 		return 0

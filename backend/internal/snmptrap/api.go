@@ -17,7 +17,7 @@ func (a RulesAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		rules, err := a.Repo.ListRules(ctx)
+		rules, err := a.Repo.ListRules(ctx, "") // "" = every tenant's rules, unchanged listing scope
 		if err != nil {
 			http.Error(w, "failed to load trap rules", http.StatusInternalServerError)
 			return

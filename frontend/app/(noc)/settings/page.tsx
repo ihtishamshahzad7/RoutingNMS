@@ -164,8 +164,8 @@ function BackupCard() {
         </FieldLabel>
         {mode === "overwrite" && (
           <Banner tone="error">
-            Overwrite deletes ALL existing devices, tags, device groups and notification channels for this tenant — and every alert rule
-            instance-wide, since alert rules aren&apos;t scoped per tenant in this build — before importing. This cannot be undone.
+            Overwrite deletes ALL existing devices, tags, device groups, notification channels and alert rules for this tenant before
+            importing. This cannot be undone.
           </Banner>
         )}
         <Button variant={mode === "overwrite" ? "danger" : "primary"} disabled={importing} type="submit">

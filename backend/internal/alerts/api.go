@@ -72,7 +72,10 @@ func (a API) handlePresets(w http.ResponseWriter, r *http.Request) {
 func (a API) handleRules(w http.ResponseWriter, r *http.Request, rest []string) {
 	switch {
 	case r.Method == http.MethodGet && len(rest) == 0:
-		rules, err := a.Repo.ListRules(r.Context())
+		// tenantId is optional -- an empty value (the pre-existing default,
+		// since the frontend doesn't send it yet) lists every tenant's rules,
+		// matching the "" == all convention already used by ListChannels.
+		rules, err := a.Repo.ListRules(r.Context(), r.URL.Query().Get("tenantId"))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

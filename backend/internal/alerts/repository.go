@@ -21,7 +21,12 @@ type Repository struct{ DB *pgxpool.Pool }
 // PersistedRule is a `alert_rules` row. Condition is the parsed condition_config
 // JSONB (e.g. {"metric":"icmp_loss_pct","operator":">","threshold":30,"unit":"%"}).
 type PersistedRule struct {
-	ID                     int64          `json:"id"`
+	ID int64 `json:"id"`
+	// TenantID scopes this rule to one tenant ("" is the pre-migration/
+	// unattributed bucket, matching PersistedChannel.TenantID and
+	// ListChannels' "" == all tenants convention below). Set on create,
+	// immutable on update (see UpdateRule).
+	TenantID               string         `json:"tenantId"`
 	Name                   string         `json:"name"`
 	Description            string         `json:"description"`
 	RuleType               string         `json:"ruleType"`
@@ -60,15 +65,25 @@ type PersistedChannel struct {
 
 const defaultSeverity = "warning"
 
-// ListRules returns all alert rules ordered by id.
-func (r Repository) ListRules(ctx context.Context) ([]PersistedRule, error) {
+// ListRules returns alert rules ordered by id, scoped to tenantID -- an
+// empty tenantID returns every rule instance-wide (the same "" == all
+// convention ListChannels already uses), so every pre-existing caller that
+// evaluates or lists globally keeps working unchanged by passing "".
+func (r Repository) ListRules(ctx context.Context, tenantID string) ([]PersistedRule, error) {
 	if r.DB == nil {
 		return nil, fmt.Errorf("alerts repository is not initialized")
 	}
-	rows, err := r.DB.Query(ctx, `SELECT id,name,description,rule_type,condition_config,severity,
+	query := `SELECT id,tenant_id,name,description,rule_type,condition_config,severity,
 		for_duration_sec,cooldown_sec,notification_channel_ids,device_group,is_enabled,
 		resend_interval,upside_down,created_by,created_at,updated_at
-		FROM alert_rules ORDER BY id ASC`)
+		FROM alert_rules`
+	var rows pgx.Rows
+	var err error
+	if tenantID == "" {
+		rows, err = r.DB.Query(ctx, query+` ORDER BY id ASC`)
+	} else {
+		rows, err = r.DB.Query(ctx, query+` WHERE tenant_id=$1 ORDER BY id ASC`, tenantID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +93,7 @@ func (r Repository) ListRules(ctx context.Context) ([]PersistedRule, error) {
 		rule := PersistedRule{Condition: map[string]any{}}
 		var cond []byte
 		var channels []byte
-		if err := rows.Scan(&rule.ID, &rule.Name, &rule.Description, &rule.RuleType, &cond,
+		if err := rows.Scan(&rule.ID, &rule.TenantID, &rule.Name, &rule.Description, &rule.RuleType, &cond,
 			&rule.Severity, &rule.ForDurationSec, &rule.CooldownSec, &channels,
 			&rule.DeviceGroup, &rule.Enabled, &rule.ResendInterval, &rule.UpsideDown,
 			&rule.CreatedBy, &rule.CreatedAt, &rule.UpdatedAt); err != nil {
@@ -117,9 +132,9 @@ func (r Repository) SaveRule(ctx context.Context, rule PersistedRule) (Persisted
 		return PersistedRule{}, err
 	}
 	err = r.DB.QueryRow(ctx, `INSERT INTO alert_rules
-		(name,description,rule_type,condition_config,severity,for_duration_sec,cooldown_sec,notification_channel_ids,device_group,is_enabled,resend_interval,upside_down,created_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id,created_at,updated_at`,
-		rule.Name, rule.Description, rule.RuleType, cond, rule.Severity,
+		(tenant_id,name,description,rule_type,condition_config,severity,for_duration_sec,cooldown_sec,notification_channel_ids,device_group,is_enabled,resend_interval,upside_down,created_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id,created_at,updated_at`,
+		rule.TenantID, rule.Name, rule.Description, rule.RuleType, cond, rule.Severity,
 		rule.ForDurationSec, rule.CooldownSec, channels, rule.DeviceGroup, rule.Enabled,
 		rule.ResendInterval, rule.UpsideDown, rule.CreatedBy).
 		Scan(&rule.ID, &rule.CreatedAt, &rule.UpdatedAt)
@@ -278,20 +293,32 @@ func (r Repository) DeleteAllChannelsForTenant(ctx context.Context, tenantID str
 // already exists. alert_rules has no tenant_id column (it predates
 // per-tenant scoping), so this checks across the whole table -- used by
 // backup/restore's "skip" import mode (internal/backup).
-func (r Repository) RuleExistsByName(ctx context.Context, name string) (bool, error) {
+func (r Repository) RuleExistsByName(ctx context.Context, tenantID, name string) (bool, error) {
 	if r.DB == nil {
 		return false, fmt.Errorf("alerts repository is not initialized")
 	}
 	var exists bool
-	err := r.DB.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM alert_rules WHERE name=$1)`, name).Scan(&exists)
+	err := r.DB.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM alert_rules WHERE tenant_id=$1 AND name=$2)`, tenantID, name).Scan(&exists)
 	return exists, err
 }
 
-// DeleteAllRules removes every alert rule. alert_rules has no tenant_id
-// column, so this is instance-wide, not scoped to one tenant -- used by
-// backup/restore's "overwrite" import mode (internal/backup), which
-// documents this as a known limitation of restoring on a multi-tenant
-// deployment.
+// DeleteAllForTenant removes every alert rule belonging to one tenant --
+// used by backup/restore's "overwrite" import mode (internal/backup). Now
+// that alert_rules carries a tenant_id column (migration 0040), this only
+// clears the importing tenant's own rules rather than every rule in the
+// deployment, which is what DeleteAllRules (below, kept for the empty-
+// tenant-id bucket / instance-wide use) used to have to do.
+func (r Repository) DeleteAllForTenant(ctx context.Context, tenantID string) error {
+	if r.DB == nil {
+		return fmt.Errorf("alerts repository is not initialized")
+	}
+	_, err := r.DB.Exec(ctx, `DELETE FROM alert_rules WHERE tenant_id=$1`, tenantID)
+	return err
+}
+
+// DeleteAllRules removes every alert rule instance-wide, regardless of
+// tenant. Kept for completeness/tooling use; backup/restore now uses the
+// tenant-scoped DeleteAllForTenant above instead.
 func (r Repository) DeleteAllRules(ctx context.Context) error {
 	if r.DB == nil {
 		return fmt.Errorf("alerts repository is not initialized")

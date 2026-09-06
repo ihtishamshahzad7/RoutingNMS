@@ -54,8 +54,9 @@ const Version = "1.0"
 //
 //   - Overwrite: delete all existing devices/tags/device groups/
 //     notification channels/alert rules for the target tenant (alert rules
-//     are instance-wide, see Repository.DeleteAllRules), then import
-//     everything in the bundle fresh.
+//     are now tenant-scoped too, migration 0040 -- see
+//     Repository.DeleteAllForTenant), then import everything in the bundle
+//     fresh.
 //   - Keep: import everything in the bundle as new rows, alongside existing
 //     data. No dedup by name -- except where RoutingNMS's schema enforces a
 //     uniqueness constraint Kuma's doesn't have (see Import's doc comment).
@@ -112,10 +113,8 @@ type Result struct {
 }
 
 // Export assembles a Bundle for one tenant. tenantID scopes devices (as
-// devices.Record.OrganizationID), tags, device groups and notification
-// channels; alert_rules has no tenant_id column in RoutingNMS's schema (it
-// predates per-tenant scoping) so every alert rule is included regardless of
-// tenantID -- a documented limitation on a multi-tenant deployment.
+// devices.Record.OrganizationID), tags, device groups, notification
+// channels, and (since migration 0040) alert rules too.
 func Export(ctx context.Context, repos Repositories, tenantID string) (*Bundle, error) {
 	deviceList, err := repos.Devices.List(ctx, tenantID)
 	if err != nil {
@@ -167,7 +166,7 @@ func Export(ctx context.Context, repos Repositories, tenantID string) (*Bundle, 
 		return nil, fmt.Errorf("loading notification channels: %w", err)
 	}
 
-	rules, err := repos.Alerts.ListRules(ctx)
+	rules, err := repos.Alerts.ListRules(ctx, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("loading alert rules: %w", err)
 	}
@@ -235,10 +234,9 @@ func Import(ctx context.Context, repos Repositories, tenantID string, bundle *Bu
 		if err := repos.Alerts.DeleteAllChannelsForTenant(ctx, tenantID); err != nil {
 			return nil, fmt.Errorf("clearing existing notification channels: %w", err)
 		}
-		if err := repos.Alerts.DeleteAllRules(ctx); err != nil {
+		if err := repos.Alerts.DeleteAllForTenant(ctx, tenantID); err != nil {
 			return nil, fmt.Errorf("clearing existing alert rules: %w", err)
 		}
-		result.Warnings = append(result.Warnings, "overwrite mode cleared ALL alert rules instance-wide (alert_rules has no per-tenant scoping in this schema), not just this tenant's")
 	}
 
 	// Tags and device groups first (by name) so devices/memberships below
@@ -355,7 +353,7 @@ func Import(ctx context.Context, repos Repositories, tenantID string, bundle *Bu
 	// dangling).
 	for _, rule := range bundle.AlertRules {
 		if mode == ModeSkip {
-			exists, err := repos.Alerts.RuleExistsByName(ctx, rule.Name)
+			exists, err := repos.Alerts.RuleExistsByName(ctx, tenantID, rule.Name)
 			if err != nil {
 				return nil, fmt.Errorf("checking alert rule %q: %w", rule.Name, err)
 			}
@@ -366,6 +364,7 @@ func Import(ctx context.Context, repos Repositories, tenantID string, bundle *Bu
 		}
 		toCreate := rule
 		toCreate.ID = 0
+		toCreate.TenantID = tenantID
 		remapped := make([]int64, 0, len(rule.NotificationChannelIDs))
 		for _, oldID := range rule.NotificationChannelIDs {
 			if newID, ok := channelByOldID[oldID]; ok {
