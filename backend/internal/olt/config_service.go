@@ -33,7 +33,7 @@ func scanConfiguredOLT(row rowScanner, profiles *ProfileRegistry) (ConfiguredOLT
 	var o OLT
 	var version, community, username, authProto, authPass, privProto, privPass, profileName string
 	var pollSeconds int
-	if err := row.Scan(&o.ID, &o.Name, &o.Address, &o.Vendor, &o.Model, &o.Serial, &o.Enabled, &version, &community, &username, &authProto, &authPass, &privProto, &privPass, &pollSeconds, &profileName); err != nil {
+	if err := row.Scan(&o.ID, &o.Name, &o.OrganizationID, &o.Address, &o.Vendor, &o.Model, &o.Serial, &o.Enabled, &version, &community, &username, &authProto, &authPass, &privProto, &privPass, &pollSeconds, &profileName); err != nil {
 		if err == pgx.ErrNoRows {
 			return ConfiguredOLT{}, fmt.Errorf("OLT not found")
 		}
@@ -66,7 +66,7 @@ func (s ConfigService) LoadEnabled(ctx context.Context) ([]ConfiguredOLT, error)
 	if s.Profiles == nil {
 		return nil, fmt.Errorf("OLT profile registry is not initialized")
 	}
-	rows, err := s.DB.Query(ctx, `SELECT id,name,address,vendor,model,serial,enabled,snmp_version,snmp_community,snmp_username,snmp_auth_protocol,snmp_auth_password,snmp_priv_protocol,snmp_priv_password,poll_interval_seconds,profile_name FROM olts WHERE enabled=true ORDER BY name`)
+	rows, err := s.DB.Query(ctx, `SELECT id,name,organization_id,address,vendor,model,serial,enabled,snmp_version,snmp_community,snmp_username,snmp_auth_protocol,snmp_auth_password,snmp_priv_protocol,snmp_priv_password,poll_interval_seconds,profile_name FROM olts WHERE enabled=true ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}

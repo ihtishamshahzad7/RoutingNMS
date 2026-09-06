@@ -63,7 +63,7 @@ func (m *RuntimeManager) startOne(parent context.Context, cfg ConfiguredOLT) err
 		m.recordSuccess(cfg.OLT.ID, result)
 		if m.Metrics.Repo.DB != nil {
 			metricsCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if err := m.Metrics.Record(metricsCtx, cfg.OLT.ID, result); err != nil {
+			if err := m.Metrics.Record(metricsCtx, cfg.OLT.ID, cfg.OLT.OrganizationID, result); err != nil {
 				log.Printf("OLT metric history write failed id=%s: %v", cfg.OLT.ID, err)
 			}
 			cancel()

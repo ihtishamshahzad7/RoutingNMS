@@ -17,6 +17,10 @@ type OLT struct {
 	Model string `json:"model,omitempty"`
 	Serial string `json:"serial,omitempty"`
 	Enabled bool `json:"enabled"`
+	// OrganizationID scopes this OLT to a tenant, mirroring devices.organization_id.
+	// "" (the pre-existing default) means unattributed/instance-wide, matching
+	// every OLT created before this field existed.
+	OrganizationID string `json:"organizationId,omitempty"`
 }
 
 type PONPort struct {
