@@ -57,6 +57,7 @@ const NAV_GROUPS: NavGroup[] = [
       { name: "Access Points", href: "/access-points", icon: Wifi },
       { name: "Topology", href: "/topology", icon: Network },
       { name: "Topology Links", href: "/topology-links", icon: Cable },
+      { name: "Workspace Topology", href: "/workspace-topology", icon: FolderTree },
       { name: "Sites", href: "/sites", icon: MapPin },
       { name: "Customers", href: "/customers", icon: Users },
       { name: "Provisioning", href: "/provisioning", icon: Wrench },

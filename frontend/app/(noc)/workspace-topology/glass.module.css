@@ -1,0 +1,303 @@
+/*
+ * Glassmorphism / neon-dark styling scoped to the Workspace Topology
+ * Builder only, via CSS Modules -- these class names never leak into the
+ * rest of the app, so the existing unified GitHub-dark design system
+ * (feature 9) is untouched. This page opts into its own darker, neon-accent
+ * look because it's explicitly an EVE-NG-style visual workspace, not a
+ * data-table page.
+ */
+
+.page {
+  --wt-bg: #0a0a0f;
+  --wt-panel: rgba(20, 20, 30, 0.55);
+  --wt-border: rgba(255, 255, 255, 0.08);
+  --wt-cyan: #22d3ee;
+  --wt-green: #34d399;
+  --wt-red: #f87171;
+  --wt-amber: #fbbf24;
+  background: radial-gradient(circle at 20% -10%, #131320 0%, var(--wt-bg) 55%);
+  color: #e5e7eb;
+  min-height: 100vh;
+  display: flex;
+  overflow: hidden;
+}
+
+.glassPanel {
+  background: var(--wt-panel);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  border: 1px solid var(--wt-border);
+  border-radius: 14px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+}
+
+.sidebar {
+  composes: glassPanel;
+  width: 260px;
+  flex-shrink: 0;
+  margin: 12px 0 12px 12px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sidebarTitle {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #94a3b8;
+  padding: 0 4px;
+}
+
+.groupRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.groupRow:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.groupRowActive {
+  background: rgba(34, 211, 238, 0.1);
+  border-color: rgba(34, 211, 238, 0.35);
+}
+
+.canvasArea {
+  flex: 1;
+  position: relative;
+  margin: 12px;
+}
+
+.canvasSurface {
+  composes: glassPanel;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+.toolbar {
+  composes: glassPanel;
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 5;
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+}
+
+.paletteButton {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: 9px;
+  border: 1px solid var(--wt-border);
+  background: rgba(255, 255, 255, 0.03);
+  color: #e5e7eb;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.1s ease;
+}
+.paletteButton:hover {
+  border-color: var(--wt-cyan);
+  transform: translateY(-1px);
+}
+.paletteButtonPrimary {
+  composes: paletteButton;
+  border-color: var(--wt-cyan);
+  background: rgba(34, 211, 238, 0.12);
+}
+.paletteButtonPrimary[data-busy="true"] {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.deviceNode {
+  position: absolute;
+  width: 96px;
+  transform: translate(-50%, -50%);
+  cursor: grab;
+  user-select: none;
+}
+.deviceNode:active {
+  cursor: grabbing;
+}
+.deviceGlyph {
+  composes: glassPanel;
+  width: 56px;
+  height: 56px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  position: relative;
+}
+.deviceGlyphSelected {
+  composes: deviceGlyph;
+  border-color: var(--wt-cyan);
+  box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.35), 0 8px 32px rgba(0, 0, 0, 0.35);
+}
+.statusDot {
+  position: absolute;
+  bottom: -3px;
+  right: -3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 2px solid var(--wt-bg);
+}
+.statusOnline {
+  background: var(--wt-green);
+  box-shadow: 0 0 6px var(--wt-green);
+}
+.statusOffline {
+  background: var(--wt-red);
+  box-shadow: 0 0 6px var(--wt-red);
+}
+.deviceLabel {
+  text-align: center;
+  font-size: 11px;
+  margin-top: 6px;
+  color: #cbd5e1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.linkPulse {
+  stroke: var(--wt-cyan);
+  stroke-width: 2;
+  fill: none;
+  filter: drop-shadow(0 0 3px rgba(34, 211, 238, 0.6));
+}
+.linkDiscovered {
+  stroke-dasharray: 4 4;
+}
+
+.monitorPanel {
+  composes: glassPanel;
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 100%;
+  width: 380px;
+  border-radius: 14px 0 0 14px;
+  padding: 16px;
+  overflow-y: auto;
+  animation: slideIn 0.2s ease-out;
+}
+@keyframes slideIn {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.sectionTitle {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #94a3b8;
+  margin: 18px 0 8px;
+}
+
+.uptimeBar {
+  display: flex;
+  height: 22px;
+  border-radius: 6px;
+  overflow: hidden;
+  gap: 1px;
+}
+.uptimeSegUp {
+  background: var(--wt-green);
+  opacity: 0.65;
+  flex: 1;
+}
+.uptimeSegDown {
+  background: var(--wt-red);
+  flex: 1;
+  animation: pulse 1.6s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
+.alertRow {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--wt-border);
+  margin-bottom: 6px;
+  font-size: 12.5px;
+}
+.alertCritical {
+  border-left: 3px solid var(--wt-red);
+}
+.alertWarning {
+  border-left: 3px solid var(--wt-amber);
+}
+.alertInfo {
+  border-left: 3px solid var(--wt-cyan);
+}
+
+.bellButton {
+  position: relative;
+  composes: glassPanel;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.bellBadge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  background: var(--wt-red);
+  color: white;
+  font-size: 10px;
+  font-weight: 600;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.psuRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  padding: 4px 0;
+}
+
+@media (max-width: 900px) {
+  .sidebar {
+    width: 200px;
+  }
+  .monitorPanel {
+    width: 100%;
+    border-radius: 0;
+  }
+}
