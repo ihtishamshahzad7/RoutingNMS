@@ -18,6 +18,7 @@ import (
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/apikeys"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/auth"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/backup"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/badges"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/customers"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/devicegroups"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/devices"
@@ -525,6 +526,28 @@ func main() {
 		mux.Handle("DELETE /api/v1/status-pages/{id}", authHandler.Middleware(statuspage.AdminAPI{Repo: statusPageRepo}))
 		mux.Handle("PUT /api/v1/status-pages/{id}/items", authHandler.Middleware(statuspage.ItemsAPI{Repo: statusPageRepo}))
 		mux.Handle("GET /api/v1/public/status/{slug}", statuspage.PublicAPI{Repo: statusPageRepo, Resolver: statuspage.StatusResolver{DB: db}})
+
+		// Dynamic SVG status badges, ported from Uptime Kuma: public,
+		// embeddable badge images for a device's live status/uptime/ping/
+		// response/cert-expiry, meant for a README or wiki page. Like the
+		// public status page above, these are deliberately registered
+		// outside the auth-required block -- they authenticate purely via
+		// badges.Handler's public-status-page visibility gate (a device
+		// only ever returns real data if it's an item on a *published*
+		// status page; otherwise every route still returns HTTP 200 with a
+		// grey "N/A" badge, never revealing whether a private/nonexistent
+		// device exists). {duration} is optional on uptime/ping/avg-response
+		// (mirrors Kuma's `:duration?`), so each is registered twice.
+		badgesHandler := badges.Handler{Repo: badges.Repository{DB: db}}
+		mux.HandleFunc("GET /api/v1/badge/{deviceId}/status", badgesHandler.Status)
+		mux.HandleFunc("GET /api/v1/badge/{deviceId}/uptime", badgesHandler.Uptime)
+		mux.HandleFunc("GET /api/v1/badge/{deviceId}/uptime/{duration}", badgesHandler.Uptime)
+		mux.HandleFunc("GET /api/v1/badge/{deviceId}/ping", badgesHandler.Ping)
+		mux.HandleFunc("GET /api/v1/badge/{deviceId}/ping/{duration}", badgesHandler.Ping)
+		mux.HandleFunc("GET /api/v1/badge/{deviceId}/avg-response", badgesHandler.AvgResponse)
+		mux.HandleFunc("GET /api/v1/badge/{deviceId}/avg-response/{duration}", badgesHandler.AvgResponse)
+		mux.HandleFunc("GET /api/v1/badge/{deviceId}/response", badgesHandler.Response)
+		mux.HandleFunc("GET /api/v1/badge/{deviceId}/cert-exp", badgesHandler.CertExp)
 
 		maintenanceRepo := maintenance.Repository{DB: db}
 		mux.Handle("GET /api/v1/maintenance-windows", authHandler.Middleware(maintenance.AdminAPI{Repo: maintenanceRepo}))
