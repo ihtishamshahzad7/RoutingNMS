@@ -7,7 +7,9 @@ package httpcheck
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"io"
 	"net/http"
 	"strings"
@@ -19,9 +21,23 @@ type Result struct {
 	Reachable        bool
 	StatusCode       int
 	LatencyMS        float64
-	KeywordMatched   *bool // nil when no keyword was configured
-	CertExpiryInDays *int  // nil for a plain http:// URL, or if the cert couldn't be inspected
+	KeywordMatched   *bool      // nil when no keyword was configured
+	CertExpiryInDays *int       // nil for a plain http:// URL, or if the cert couldn't be inspected
+	CertChain        []CertLink // nil for a plain http:// URL, or if the cert couldn't be inspected
 	Error            string
+}
+
+// CertLink describes one certificate in the TLS chain presented by the
+// server, mirroring (a simplified version of) the certificate details Kuma
+// captures via Node's tls.getPeerCertificate({detailed: true}) and displays
+// on its monitor detail page.
+type CertLink struct {
+	CertType          string    `json:"certType"` // "server" for the leaf (index 0), "intermediate CA" for the rest
+	Subject           string    `json:"subject"`  // pkix.Name.CommonName, falling back to the full String() if blank
+	Issuer            string    `json:"issuer"`
+	ValidFrom         time.Time `json:"validFrom"`
+	ValidTo           time.Time `json:"validTo"`
+	FingerprintSHA256 string    `json:"fingerprintSha256"` // hex-encoded sha256(cert.Raw), Kuma's own fingerprint scheme
 }
 
 // Check fetches url, verifies the status code and (if keyword is non-empty)
@@ -77,6 +93,7 @@ func Check(ctx context.Context, url string, expectedStatus int, keyword string, 
 		if days := certExpiryDays(resp.TLS); days != nil {
 			result.CertExpiryInDays = days
 		}
+		result.CertChain = certChain(resp.TLS)
 	}
 
 	return result
@@ -90,4 +107,55 @@ func certExpiryDays(state *tls.ConnectionState) *int {
 	expiry := state.PeerCertificates[0].NotAfter
 	days := int(time.Until(expiry).Hours() / 24)
 	return &days
+}
+
+// certChain builds a Kuma-style chain summary from the certificates the
+// server actually presented on the wire (state.PeerCertificates), NOT from
+// state.VerifiedChains. We deliberately use PeerCertificates: it is the
+// direct Go equivalent of what Node's tls socket exposes as
+// getPeerCertificate()/issuerCertificate (what the server sent), whereas
+// VerifiedChains reflects Go's own trust-store validation and can omit
+// certs the server sent or substitute differently-sourced ones -- using
+// PeerCertificates keeps the "what does this server present" semantics
+// Kuma's panel is built around.
+//
+// Known simplification vs. Kuma: Node's chain walk terminates at a
+// self-signed root (from the OS trust store or the chain itself) and the
+// UI implicitly treats the last link as the root CA. Go's PeerCertificates
+// only contains what the server sent (almost never the root CA itself, per
+// TLS convention), and Go's stdlib has no lightweight way to fetch/label a
+// system root cert by AuthorityKeyId. So every certificate here is labeled
+// "server" (index 0) or "intermediate CA" (the rest) -- we never label a
+// "root CA" the way Kuma's UI does. This is a cosmetic gap, not a
+// correctness one: the leaf validity dates driving CertExpiryInDays are
+// unaffected.
+func certChain(state *tls.ConnectionState) []CertLink {
+	if state == nil || len(state.PeerCertificates) == 0 {
+		return nil
+	}
+	chain := make([]CertLink, 0, len(state.PeerCertificates))
+	for i, cert := range state.PeerCertificates {
+		certType := "intermediate CA"
+		if i == 0 {
+			certType = "server"
+		}
+		subject := cert.Subject.CommonName
+		if subject == "" {
+			subject = cert.Subject.String()
+		}
+		issuer := cert.Issuer.CommonName
+		if issuer == "" {
+			issuer = cert.Issuer.String()
+		}
+		sum := sha256.Sum256(cert.Raw)
+		chain = append(chain, CertLink{
+			CertType:          certType,
+			Subject:           subject,
+			Issuer:            issuer,
+			ValidFrom:         cert.NotBefore,
+			ValidTo:           cert.NotAfter,
+			FingerprintSHA256: hex.EncodeToString(sum[:]),
+		})
+	}
+	return chain
 }

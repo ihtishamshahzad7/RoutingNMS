@@ -72,6 +72,15 @@ func sampleOnce(ctx context.Context, repo Repository, metrics metricsdb.Reposito
 			if result.CertExpiryInDays != nil {
 				samples = append(samples, metricsdb.Sample{SubjectType: "device", SubjectID: d.ID, TenantID: d.OrganizationID, MetricName: "http_cert_expiry_days", Value: float64(*result.CertExpiryInDays), RecordedAt: now})
 			}
+			// Certificate details (issuer/subject/validity/fingerprint/chain)
+			// are mostly-static metadata, not a time series -- persist the
+			// latest snapshot on the device row rather than as metric
+			// samples (see devices.CertInfo).
+			if certInfo := NewCertInfo(result); certInfo != nil {
+				if err := repo.UpdateHTTPCertInfo(ctx, d.ID, certInfo); err != nil {
+					log.Printf("device metric sampler: update cert info for %s: %v", d.ID, err)
+				}
+			}
 		}
 	}
 	if err := metrics.RecordBatch(ctx, samples); err != nil {

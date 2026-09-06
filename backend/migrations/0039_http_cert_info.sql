@@ -1,0 +1,16 @@
+-- Full TLS certificate details for the HTTP(S) monitor, ported from Uptime
+-- Kuma's monitor detail page (server/util-server.js's checkCertificate /
+-- parseCertificateInfo), which shows issuer/subject/validity/fingerprint
+-- and the certificate chain -- not just "days until expiry" (that already
+-- exists as the http_cert_expiry_days metric sample and is unaffected by
+-- this migration).
+--
+-- This is mostly-static per-device metadata that only changes when the
+-- device's certificate is renewed, not a time series -- so it follows the
+-- same "latest value column on devices" convention already used for
+-- push_last_seen_at/push_last_status/push_last_message, rather than being
+-- added to metric_samples. Stored as a single JSON blob (parsed
+-- httpcheck.CertLink chain, leaf-first) since its shape is nested/variable
+-- length (one row per cert in the chain) and it is read as a whole object
+-- by the API, never queried column-by-column.
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS http_cert_info_json TEXT;

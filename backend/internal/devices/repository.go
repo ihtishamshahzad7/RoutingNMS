@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/httpcheck"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -46,6 +48,7 @@ type Record struct {
 	HTTPExpectedStatus        int        `json:"httpExpectedStatus"`
 	HTTPKeyword               string     `json:"httpKeyword,omitempty"`
 	HTTPTimeoutMS             int        `json:"httpTimeoutMs"`
+	HTTPCertInfo              *CertInfo  `json:"certInfo,omitempty"`
 	ICMPEnabled               bool       `json:"icmpEnabled"`
 	ICMPIntervalSeconds       int        `json:"icmpIntervalSeconds"`
 	ICMPPacketSize            int        `json:"icmpPacketSize"`
@@ -74,6 +77,67 @@ type Record struct {
 	TelnetBannerKeyword       string     `json:"telnetBannerKeyword,omitempty"`
 	TelnetTimeoutMS           int        `json:"telnetTimeoutMs"`
 	TelnetIntervalSeconds     int        `json:"telnetIntervalSeconds"`
+}
+
+// CertInfo is the latest-known TLS certificate detail for a device's
+// HTTP(S) check, persisted as JSON in devices.http_cert_info_json (a
+// "latest value" column, following the same convention as
+// push_last_status/push_last_message) and surfaced on the device API
+// response as certInfo. It mirrors the certificate panel Uptime Kuma shows
+// on its monitor detail page (issuer, subject, validity, fingerprint, and
+// the full chain), built from httpcheck.Result on each HTTP(S) poll.
+type CertInfo struct {
+	Subject           string               `json:"subject"`
+	Issuer            string               `json:"issuer"`
+	ValidFrom         time.Time            `json:"validFrom"`
+	ValidTo           time.Time            `json:"validTo"`
+	FingerprintSHA256 string               `json:"fingerprintSha256"`
+	DaysRemaining     int                  `json:"daysRemaining"`
+	Chain             []httpcheck.CertLink `json:"chain"`
+}
+
+// NewCertInfo builds a CertInfo from one httpcheck.Result, or returns nil if
+// the check didn't yield a certificate chain (plain http://, or the TLS
+// handshake didn't complete).
+func NewCertInfo(result httpcheck.Result) *CertInfo {
+	if len(result.CertChain) == 0 {
+		return nil
+	}
+	leaf := result.CertChain[0]
+	days := 0
+	if result.CertExpiryInDays != nil {
+		days = *result.CertExpiryInDays
+	}
+	return &CertInfo{
+		Subject:           leaf.Subject,
+		Issuer:            leaf.Issuer,
+		ValidFrom:         leaf.ValidFrom,
+		ValidTo:           leaf.ValidTo,
+		FingerprintSHA256: leaf.FingerprintSHA256,
+		DaysRemaining:     days,
+		Chain:             result.CertChain,
+	}
+}
+
+// UpdateHTTPCertInfo persists the latest TLS certificate info captured by
+// the HTTP(S) poller for a device, following the same "UPDATE the latest
+// value column" convention as RecordPush. Passing a nil info clears the
+// stored value (e.g. once a device's check no longer sees a cert).
+func (r Repository) UpdateHTTPCertInfo(ctx context.Context, id string, info *CertInfo) error {
+	if r.DB == nil {
+		return fmt.Errorf("device repository is not initialized")
+	}
+	var raw *string
+	if info != nil {
+		b, err := json.Marshal(info)
+		if err != nil {
+			return err
+		}
+		s := string(b)
+		raw = &s
+	}
+	_, err := r.DB.Exec(ctx, `UPDATE devices SET http_cert_info_json=$2,updated_at=NOW() WHERE id=$1`, id, raw)
+	return err
 }
 
 // ICMPCheckRequest configures the dedicated ICMP ping poller (internal/ping)
@@ -365,9 +429,16 @@ func (r Repository) GetByID(ctx context.Context, id string) (Record, error) {
 		return Record{}, fmt.Errorf("device repository is not initialized")
 	}
 	var d Record
-	err := r.DB.QueryRow(ctx, `SELECT id,organization_id,name,address,device_type,COALESCE(vendor,''),COALESCE(model,''),COALESCE(serial_number,''),enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port,provisioning_template_id,last_provisioned_at,http_check_enabled,http_url,http_expected_status,http_keyword,http_timeout_ms,icmp_enabled,icmp_interval_seconds,icmp_packet_size,icmp_count,icmp_retries,dns_enabled,dns_hostname,dns_record_type,dns_resolver_server,dns_expected_answer,dns_interval_seconds,push_enabled,COALESCE(push_token,''),push_interval_seconds,push_grace_period_seconds,push_last_seen_at,push_last_status,push_last_message,ssh_enabled,ssh_port,ssh_banner_keyword,ssh_timeout_ms,ssh_interval_seconds,telnet_enabled,telnet_port,telnet_banner_keyword,telnet_timeout_ms,telnet_interval_seconds FROM devices WHERE id=$1`, id).
-		Scan(&d.ID, &d.OrganizationID, &d.Name, &d.Address, &d.DeviceType, &d.Vendor, &d.Model, &d.SerialNumber, &d.Enabled, &d.MonitoringIntervalSeconds, &d.SNMPEnabled, &d.SNMPVersion, &d.SNMPPort, &d.ProvisioningTemplateID, &d.LastProvisionedAt, &d.HTTPCheckEnabled, &d.HTTPURL, &d.HTTPExpectedStatus, &d.HTTPKeyword, &d.HTTPTimeoutMS, &d.ICMPEnabled, &d.ICMPIntervalSeconds, &d.ICMPPacketSize, &d.ICMPCount, &d.ICMPRetries, &d.DNSEnabled, &d.DNSHostname, &d.DNSRecordType, &d.DNSResolverServer, &d.DNSExpectedAnswer, &d.DNSIntervalSeconds, &d.PushEnabled, &d.PushToken, &d.PushIntervalSeconds, &d.PushGracePeriodSeconds, &d.PushLastSeenAt, &d.PushLastStatus, &d.PushLastMessage, &d.SSHEnabled, &d.SSHPort, &d.SSHBannerKeyword, &d.SSHTimeoutMS, &d.SSHIntervalSeconds, &d.TelnetEnabled, &d.TelnetPort, &d.TelnetBannerKeyword, &d.TelnetTimeoutMS, &d.TelnetIntervalSeconds)
+	var certInfoJSON *string
+	err := r.DB.QueryRow(ctx, `SELECT id,organization_id,name,address,device_type,COALESCE(vendor,''),COALESCE(model,''),COALESCE(serial_number,''),enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port,provisioning_template_id,last_provisioned_at,http_check_enabled,http_url,http_expected_status,http_keyword,http_timeout_ms,http_cert_info_json,icmp_enabled,icmp_interval_seconds,icmp_packet_size,icmp_count,icmp_retries,dns_enabled,dns_hostname,dns_record_type,dns_resolver_server,dns_expected_answer,dns_interval_seconds,push_enabled,COALESCE(push_token,''),push_interval_seconds,push_grace_period_seconds,push_last_seen_at,push_last_status,push_last_message,ssh_enabled,ssh_port,ssh_banner_keyword,ssh_timeout_ms,ssh_interval_seconds,telnet_enabled,telnet_port,telnet_banner_keyword,telnet_timeout_ms,telnet_interval_seconds FROM devices WHERE id=$1`, id).
+		Scan(&d.ID, &d.OrganizationID, &d.Name, &d.Address, &d.DeviceType, &d.Vendor, &d.Model, &d.SerialNumber, &d.Enabled, &d.MonitoringIntervalSeconds, &d.SNMPEnabled, &d.SNMPVersion, &d.SNMPPort, &d.ProvisioningTemplateID, &d.LastProvisionedAt, &d.HTTPCheckEnabled, &d.HTTPURL, &d.HTTPExpectedStatus, &d.HTTPKeyword, &d.HTTPTimeoutMS, &certInfoJSON, &d.ICMPEnabled, &d.ICMPIntervalSeconds, &d.ICMPPacketSize, &d.ICMPCount, &d.ICMPRetries, &d.DNSEnabled, &d.DNSHostname, &d.DNSRecordType, &d.DNSResolverServer, &d.DNSExpectedAnswer, &d.DNSIntervalSeconds, &d.PushEnabled, &d.PushToken, &d.PushIntervalSeconds, &d.PushGracePeriodSeconds, &d.PushLastSeenAt, &d.PushLastStatus, &d.PushLastMessage, &d.SSHEnabled, &d.SSHPort, &d.SSHBannerKeyword, &d.SSHTimeoutMS, &d.SSHIntervalSeconds, &d.TelnetEnabled, &d.TelnetPort, &d.TelnetBannerKeyword, &d.TelnetTimeoutMS, &d.TelnetIntervalSeconds)
 	d.SNMPConfigured = d.SNMPEnabled
+	if err == nil && certInfoJSON != nil && *certInfoJSON != "" {
+		var ci CertInfo
+		if jsonErr := json.Unmarshal([]byte(*certInfoJSON), &ci); jsonErr == nil {
+			d.HTTPCertInfo = &ci
+		}
+	}
 	return d, err
 }
 
