@@ -26,6 +26,7 @@ type Link = {
 };
 type Device = { id: string; name: string; address: string };
 type LinkStatus = { linkId: string; up: boolean; sideAUp?: boolean | null; sideBUp?: boolean | null; error?: string; checkedAt: string };
+type DiscoverResult = { interfaces?: { index: string; description?: string }[] };
 
 export default function TopologyLinksPage() {
   const [groups, setGroups] = useState<Group[]>([]);
@@ -37,6 +38,31 @@ export default function TopologyLinksPage() {
   const [error, setError] = useState("");
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [creatingLink, setCreatingLink] = useState(false);
+  // Live SNMP interface enumeration for the interfaceA/interfaceB fields --
+  // populated as <datalist> suggestions (not a hard <select>) so a manually
+  // typed interface name still works exactly as before for devices where
+  // discovery fails or SNMP isn't configured. Reuses the existing
+  // POST /devices/{id}/discover endpoint (already built for the MIB tester,
+  // device health, and the topology-link poller itself), so no backend
+  // change was needed here.
+  const [ifaceOptionsA, setIfaceOptionsA] = useState<string[]>([]);
+  const [ifaceOptionsB, setIfaceOptionsB] = useState<string[]>([]);
+
+  async function discoverInterfaces(deviceId: string, side: "A" | "B") {
+    const setOptions = side === "A" ? setIfaceOptionsA : setIfaceOptionsB;
+    setOptions([]);
+    if (!deviceId) return;
+    try {
+      const result = await apiFetch<DiscoverResult>(`/devices/${deviceId}/discover`, { method: "POST" });
+      const names = (result.interfaces || [])
+        .map((i) => i.description || i.index)
+        .filter((n): n is string => !!n);
+      setOptions(names);
+    } catch {
+      // Best-effort: SNMP may be disabled/misconfigured for this device --
+      // the interfaceA/interfaceB fields stay plain free-text inputs either way.
+    }
+  }
 
   async function loadGroups() {
     try {
@@ -120,6 +146,8 @@ export default function TopologyLinksPage() {
       });
       setLinks((prev) => [...prev, link]);
       e.currentTarget.reset();
+      setIfaceOptionsA([]);
+      setIfaceOptionsB([]);
       setMessage("Link created — SNMP polling will confirm status on the next poll cycle.");
       loadStatus(selectedGroup);
     } catch (e2) {
@@ -176,19 +204,25 @@ export default function TopologyLinksPage() {
             ) : (
               <form onSubmit={createLink} className="grid gap-4 sm:grid-cols-2">
                 <FieldLabel>Device A
-                  <select name="deviceAId" required className="mt-1 w-full rounded-[6px] border border-[#30363D] bg-[#0D1117] px-3 py-2 text-sm text-[#E6EDF3] outline-none focus:border-[#58A6FF]">
+                  <select name="deviceAId" required onChange={(e) => discoverInterfaces(e.target.value, "A")} className="mt-1 w-full rounded-[6px] border border-[#30363D] bg-[#0D1117] px-3 py-2 text-sm text-[#E6EDF3] outline-none focus:border-[#58A6FF]">
                     <option value="">Select device…</option>
                     {devices.map((d) => <option key={d.id} value={d.id}>{d.name} ({d.address})</option>)}
                   </select>
                 </FieldLabel>
-                <FieldLabel>Interface A<Input name="interfaceA" placeholder="e.g. eth1" required /></FieldLabel>
+                <FieldLabel>Interface A
+                  <Input name="interfaceA" list="topo-ifaces-a" placeholder="e.g. eth1 (pick a device to see live interfaces)" required />
+                  <datalist id="topo-ifaces-a">{ifaceOptionsA.map((n) => <option key={n} value={n} />)}</datalist>
+                </FieldLabel>
                 <FieldLabel>Device B
-                  <select name="deviceBId" required className="mt-1 w-full rounded-[6px] border border-[#30363D] bg-[#0D1117] px-3 py-2 text-sm text-[#E6EDF3] outline-none focus:border-[#58A6FF]">
+                  <select name="deviceBId" required onChange={(e) => discoverInterfaces(e.target.value, "B")} className="mt-1 w-full rounded-[6px] border border-[#30363D] bg-[#0D1117] px-3 py-2 text-sm text-[#E6EDF3] outline-none focus:border-[#58A6FF]">
                     <option value="">Select device…</option>
                     {devices.map((d) => <option key={d.id} value={d.id}>{d.name} ({d.address})</option>)}
                   </select>
                 </FieldLabel>
-                <FieldLabel>Interface B<Input name="interfaceB" placeholder="e.g. eth1" required /></FieldLabel>
+                <FieldLabel>Interface B
+                  <Input name="interfaceB" list="topo-ifaces-b" placeholder="e.g. eth1 (pick a device to see live interfaces)" required />
+                  <datalist id="topo-ifaces-b">{ifaceOptionsB.map((n) => <option key={n} value={n} />)}</datalist>
+                </FieldLabel>
                 <div className="sm:col-span-2">
                   <Button type="submit" variant="primary" disabled={creatingLink}>{creatingLink ? "Creating…" : "Create link"}</Button>
                 </div>
