@@ -35,8 +35,167 @@ export default function SettingsPage() {
       <div className="grid gap-6">
         <TwoFACard />
         <ApiKeysCard />
+        <BackupCard />
       </div>
     </main>
+  );
+}
+
+const ORG = "tenant-1";
+
+type ImportMode = "skip" | "keep" | "overwrite";
+
+type ImportResult = {
+  mode: string;
+  devicesImported: number;
+  devicesSkipped: number;
+  tagsImported: number;
+  deviceGroupsImported: number;
+  notificationChannelsImported: number;
+  notificationChannelsSkipped: number;
+  alertRulesImported: number;
+  alertRulesSkipped: number;
+  warnings?: string[];
+};
+
+function BackupCard() {
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [mode, setMode] = useState<ImportMode>("skip");
+  const [file, setFile] = useState<File | null>(null);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [result, setResult] = useState<ImportResult | null>(null);
+
+  async function exportBackup() {
+    setExporting(true);
+    setError("");
+    setMessage("");
+    try {
+      const res = await fetch(`/api/v1/backup?tenantId=${ORG}`, { credentials: "include", cache: "no-store" });
+      if (!res.ok) throw new Error(`Export failed with status ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const date = new Date().toISOString().slice(0, 10);
+      a.href = url;
+      a.download = `routingnms-backup-${date}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setMessage("Backup exported and downloaded.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to export backup.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function importBackup(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!file) {
+      setError("Choose a backup JSON file first.");
+      return;
+    }
+    setImporting(true);
+    setError("");
+    setMessage("");
+    setResult(null);
+    try {
+      const text = await file.text();
+      const res = await apiFetch<ImportResult>(`/backup/import?mode=${mode}&tenantId=${ORG}`, {
+        method: "POST",
+        body: text,
+      });
+      setResult(res);
+      setMessage("Backup imported successfully.");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to import backup — check the file is a valid RoutingNMS backup JSON.");
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  return (
+    <Card title="Backup & restore" className="p-5">
+      <p className="mb-4 text-xs text-[#8B949E]">
+        Export or restore your device inventory, tags, device groups, notification channels and alert rules as a single JSON file — configuration
+        only, no heartbeat/metric history. SNMP credentials (community strings, v3 auth/privacy passwords) are never included in an export; a
+        restored device always comes back with SNMP monitoring disabled and must be reconfigured by hand, the same way the device list&apos;s
+        &quot;Clone&quot; button deliberately doesn&apos;t carry SNMP credentials over.
+      </p>
+      {message && <Banner>{message}</Banner>}
+      {error && <Banner tone="error">{error}</Banner>}
+
+      <div className="mb-6 flex items-center justify-between rounded-[6px] border border-[#21262D] bg-[#0D1117] p-4">
+        <div>
+          <div className="text-sm font-medium text-[#E6EDF3]">Export backup</div>
+          <div className="mt-0.5 text-xs text-[#8B949E]">Downloads a JSON snapshot of your current configuration.</div>
+        </div>
+        <Button variant="primary" disabled={exporting} onClick={exportBackup}>
+          {exporting ? "Exporting…" : "Export backup"}
+        </Button>
+      </div>
+
+      <form onSubmit={importBackup} className="grid gap-3 rounded-[6px] border border-[#21262D] bg-[#0D1117] p-4">
+        <div className="text-sm font-medium text-[#E6EDF3]">Import backup</div>
+        <FieldLabel>
+          Backup JSON file
+          <Input
+            required
+            type="file"
+            accept="application/json,.json"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          />
+        </FieldLabel>
+        <FieldLabel>
+          Import mode
+          <select
+            value={mode}
+            onChange={(e) => setMode(e.target.value as ImportMode)}
+            className="mt-1 w-full rounded-[6px] border border-[#30363D] bg-[#0D1117] px-3 py-2 text-sm text-[#E6EDF3] outline-none focus:border-[#58A6FF]"
+          >
+            <option value="skip">Skip — only import rows whose name doesn&apos;t already exist</option>
+            <option value="keep">Keep — import everything as new rows alongside existing data</option>
+            <option value="overwrite">Overwrite — delete existing configuration first, then import (destructive)</option>
+          </select>
+        </FieldLabel>
+        {mode === "overwrite" && (
+          <Banner tone="error">
+            Overwrite deletes ALL existing devices, tags, device groups and notification channels for this tenant — and every alert rule
+            instance-wide, since alert rules aren&apos;t scoped per tenant in this build — before importing. This cannot be undone.
+          </Banner>
+        )}
+        <Button variant={mode === "overwrite" ? "danger" : "primary"} disabled={importing} type="submit">
+          {importing ? "Importing…" : "Import backup"}
+        </Button>
+      </form>
+
+      {result && (
+        <Panel className="mt-4">
+          <div className="text-xs font-semibold text-[#3FB950]">Import complete ({result.mode} mode):</div>
+          <ul className="mt-2 grid gap-1 text-xs text-[#C9D1D9] sm:grid-cols-2">
+            <li>Devices imported: {result.devicesImported}{result.devicesSkipped ? ` (${result.devicesSkipped} skipped)` : ""}</li>
+            <li>Tags imported: {result.tagsImported}</li>
+            <li>Device groups imported: {result.deviceGroupsImported}</li>
+            <li>
+              Notification channels imported: {result.notificationChannelsImported}
+              {result.notificationChannelsSkipped ? ` (${result.notificationChannelsSkipped} skipped)` : ""}
+            </li>
+            <li>
+              Alert rules imported: {result.alertRulesImported}
+              {result.alertRulesSkipped ? ` (${result.alertRulesSkipped} skipped)` : ""}
+            </li>
+          </ul>
+          {result.warnings?.map((w, i) => (
+            <div key={i} className="mt-2 text-xs text-[#D29922]">
+              ⚠ {w}
+            </div>
+          ))}
+        </Panel>
+      )}
+    </Card>
   );
 }
 
