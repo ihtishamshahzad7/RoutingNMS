@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Plus, Pencil, Trash2, Router, Server, ShieldAlert, Network as NetworkIcon, Radar } from "lucide-react";
+import { Plus, Pencil, Trash2, Router, Server, ShieldAlert, Network as NetworkIcon, Radar, LayoutGrid } from "lucide-react";
 import styles from "./glass.module.css";
 import { useWorkspaceStore } from "./store";
 import Canvas from "./Canvas";
@@ -40,6 +40,7 @@ export default function WorkspaceTopologyPage() {
   const selectDevice = useWorkspaceStore((s) => s.selectDevice);
   const runDiscovery = useWorkspaceStore((s) => s.runDiscovery);
   const discovering = useWorkspaceStore((s) => s.discovering);
+  const autoLayout = useWorkspaceStore((s) => s.autoLayout);
   const tickMetrics = useWorkspaceStore((s) => s.tickMetrics);
   const loadGroups = useWorkspaceStore((s) => s.loadGroups);
 
@@ -183,6 +184,15 @@ export default function WorkspaceTopologyPage() {
               >
                 <Radar size={14} />
                 {discovering ? "Discovering…" : "Discover"}
+              </button>
+              <button
+                className={styles.paletteButton}
+                onClick={() => activeGroup && autoLayout(activeGroup.id)}
+                disabled={groupDevices.length === 0}
+                title={groupDevices.length === 0 ? "Add devices first" : "Auto-arrange devices with a force-directed layout"}
+              >
+                <LayoutGrid size={14} />
+                Auto Layout
               </button>
             </div>
             <div style={{ position: "absolute", top: 16, right: activeGroup && selectedDeviceId ? 396 : 16, zIndex: 6, transition: "right 0.2s ease" }}>

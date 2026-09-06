@@ -12,6 +12,7 @@ import type {
 import { discoverFromSeed, discoverReal } from "./discovery";
 import { generateLiveMetrics, generatePowerMetrics, tickLiveMetrics } from "./mockMetrics";
 import { apiFetch, ApiError } from "../../../lib/api";
+import { forceSimulation, forceLink, forceManyBody, forceCenter, forceCollide } from "d3";
 
 // Single-tenant placeholder, same convention used by every other (noc) page
 // (device-groups, olts, alert-rules, ...) until real multi-tenant auth lands.
@@ -51,6 +52,7 @@ type WorkspaceState = {
   removeLink: (id: string) => void;
 
   runDiscovery: (groupId: string, seedDeviceId: string) => Promise<void>;
+  autoLayout: (groupId: string) => void;
 
   selectDevice: (id: string | null) => void;
   tickMetrics: () => void;
@@ -310,6 +312,50 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       }
     } finally {
       set({ discovering: false });
+    }
+  },
+
+  // D3 force-directed auto-layout: runs a physics simulation synchronously
+  // to completion (no on-screen animation -- the canvas jumps straight to
+  // the settled layout) using the group's current devices/links as nodes/
+  // edges, then applies the result the same way a manual drag would
+  // (moveDevice-equivalent set + persist), so positions survive a reload
+  // exactly like hand-placed ones.
+  autoLayout: (groupId) => {
+    const groupDevices = get().devices.filter((d) => d.groupId === groupId);
+    const groupLinks = get().links.filter((l) => l.groupId === groupId);
+    if (groupDevices.length === 0) return;
+
+    type SimNode = { id: string; x: number; y: number };
+    const nodes: SimNode[] = groupDevices.map((d) => ({ id: d.id, x: d.x, y: d.y }));
+    const edges = groupLinks
+      .filter((l) => groupDevices.some((d) => d.id === l.sourceId) && groupDevices.some((d) => d.id === l.targetId))
+      .map((l) => ({ source: l.sourceId, target: l.targetId }));
+
+    const centerX = 420;
+    const centerY = 260;
+    const sim = forceSimulation(nodes)
+      .force("link", forceLink(edges).id((n: any) => (n as SimNode).id).distance(160).strength(0.6))
+      .force("charge", forceManyBody().strength(-420))
+      .force("center", forceCenter(centerX, centerY))
+      .force("collide", forceCollide(70))
+      .stop();
+    // Run enough ticks for the simulation to settle instead of animating it
+    // on-screen tick-by-tick -- simpler to reason about and to persist.
+    for (let i = 0; i < 300; i++) sim.tick();
+
+    const positionById = new Map(nodes.map((n) => [n.id, { x: n.x, y: n.y }]));
+    set((s) => ({
+      devices: s.devices.map((d) => {
+        const pos = positionById.get(d.id);
+        return pos ? { ...d, x: pos.x, y: pos.y } : d;
+      }),
+    }));
+    for (const d of groupDevices) {
+      const pos = positionById.get(d.id);
+      if (!pos) continue;
+      const updated = { ...d, x: pos.x, y: pos.y };
+      persist(() => apiFetch(`/workspace-topology/devices/${d.id}`, { method: "PUT", body: JSON.stringify(updated) }));
     }
   },
 
