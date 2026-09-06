@@ -255,7 +255,63 @@ export default function DeviceDetailsPage(){
    <div><div className="text-xs uppercase text-slate-500">Rendered script</div><pre className="mt-1 overflow-x-auto rounded-lg border border-slate-800 bg-slate-950 p-3 text-xs text-slate-300">{preview.renderedScript}</pre></div>
   </div>}
  </section>}
+ <BadgesSection device={device} />
  <section className={card}><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">Interface inventory</h2><p className="mt-1 text-xs text-slate-500">IF-MIB data discovered from the device and persisted in PostgreSQL.</p></div><button onClick={load} className="rounded-lg border border-slate-700 px-3 py-2 text-xs hover:bg-slate-800">Refresh</button></div><div className="mt-5 overflow-x-auto"><table className="w-full min-w-[900px] text-left text-sm"><thead className="border-b border-slate-800 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-3 py-3">Index</th><th>Name</th><th>Description</th><th>Admin</th><th>Oper</th><th>In errors</th><th>Out errors</th><th>Last discovery</th></tr></thead><tbody>{interfaces.length?interfaces.map(x=><tr key={x.id} className="border-b border-slate-800/70"><td className="px-3 py-3 text-slate-500">{x.ifIndex}</td><td className="font-medium">{x.name||"—"}</td><td className="text-slate-400">{x.description||"—"}</td><td><span className={x.adminUp?"text-emerald-400":"text-slate-500"}>{x.adminUp?"UP":"DOWN"}</span></td><td><span className={x.operUp?"text-emerald-400":"text-red-400"}>{x.operUp?"UP":"DOWN"}</span></td><td>{x.inErrors}</td><td>{x.outErrors}</td><td className="text-xs text-slate-500">{x.lastDiscoveredAt?new Date(x.lastDiscoveredAt).toLocaleString():"—"}</td></tr>):<tr><td colSpan={8} className="py-12 text-center text-slate-500">No interface inventory yet. Click <b>Run SNMP Discovery</b> to discover and save interfaces.</td></tr>}</tbody></table></div> </section></main>
+}
+
+/** Embeddable SVG status-badge URLs for this device (ported from Uptime
+ *  Kuma's dynamic badge feature) -- shows the copyable badge URL plus a live
+ *  `<img>` preview for each badge type. These endpoints are public
+ *  (unauthenticated) and only ever return real data once this device is
+ *  added as an item on a *published* status page; until then every badge
+ *  still loads fine, it just shows a grey "N/A". The cert-expiry badge is
+ *  only offered for devices with HTTP(S) checking enabled, since that's the
+ *  only source of certificate-expiry data. */
+function BadgesSection({ device }: { device: Device }) {
+  const [origin, setOrigin] = useState("");
+  useEffect(() => { if (typeof window !== "undefined") setOrigin(window.location.origin); }, []);
+  const base = `${origin}/api/v1/badge/${device.id}`;
+  const badges: { key: string; label: string; path: string }[] = [
+    { key: "status", label: "Status", path: `${base}/status` },
+    { key: "uptime", label: "Uptime (24h)", path: `${base}/uptime/24h` },
+    { key: "ping", label: "Ping", path: `${base}/ping` },
+    { key: "avg-response", label: "Avg Response (24h)", path: `${base}/avg-response/24h` },
+    { key: "response", label: "Response", path: `${base}/response` },
+  ];
+  if (device.httpCheckEnabled) {
+    badges.push({ key: "cert-exp", label: "Cert Expiry", path: `${base}/cert-exp` });
+  }
+  return (
+    <section className={`mb-6 ${card}`}>
+      <div className="mb-1"><h2 className="font-semibold">Badges</h2></div>
+      <p className="mt-1 text-xs text-slate-500">Embeddable status badges for READMEs, wikis or dashboards — public URLs, no login required. Only show real data once this device is added to a <b>published</b> status page; otherwise they render a neutral &quot;N/A&quot;.</p>
+      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        {badges.map(b => (
+          <div key={b.key} className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-xs uppercase text-slate-500">{b.label}</div>
+              {origin && <img src={b.path} alt={`${b.label} badge`} className="h-5" />}
+            </div>
+            <div className="mt-3 flex items-center gap-2">
+              <code className="flex-1 overflow-x-auto rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-emerald-300">{b.path}</code>
+              <CopyButton text={b.path} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={async () => { try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { /* clipboard unavailable */ } }}
+      className="shrink-0 rounded-lg border border-cyan-700 bg-cyan-950/40 px-3 py-2 text-xs text-cyan-300 hover:bg-cyan-900/40"
+    >{copied ? "Copied!" : "Copy"}</button>
+  );
 }
 
 /** Lightweight RTT sparkline over recent ICMP probe history (hand-rolled SVG,
