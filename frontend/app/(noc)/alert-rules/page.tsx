@@ -17,6 +17,12 @@ type Preset = { id: string; name: string; description: string; ruleType: string;
 
 const TYPES = ["threshold", "icmp_loss", "icmp_rtt", "absence", "traps"];
 const SEVS = ["critical", "warning", "info"];
+// Same single-tenant placeholder convention used across the rest of this
+// frontend (tags, device-groups, backup/restore, status pages, ...) --
+// alert_rules.tenant_id and notification_channels.tenant_id both already
+// exist backend-side, but this page never sent tenantId until now, so
+// every rule/channel it created landed in the unattributed "" bucket.
+const ORG = "tenant-1";
 
 export default function AlertRulesPage() {
   const [rules, setRules] = useState<Rule[]>([]);
@@ -26,6 +32,14 @@ export default function AlertRulesPage() {
 
   const load = async () => {
     try {
+      // Deliberately NOT scoping these GETs by tenantId: production already
+      // has rules/channels created before tenant_id existed, sitting at the
+      // unattributed "" bucket. Switching the list query to `tenantId=ORG`
+      // would silently hide every one of those from this page even though
+      // they're still active server-side (the evaluator lists
+      // unscoped too) -- exactly the kind of disruption to existing
+      // configs this project avoids. So listing stays instance-wide; only
+      // newly-created rules/channels below get tagged with a real tenant.
       const [r, c, p] = await Promise.all([
         apiFetch<Rule[]>("/alerts/rules"),
         apiFetch<Channel[]>("/alerts/channels"),
@@ -179,6 +193,7 @@ function RuleForm({ channels, presets, onSaved }: { channels: Channel[]; presets
         method: "POST",
         body: JSON.stringify({
           name, description, ruleType, severity,
+          tenantId: ORG,
           forDurationSec: parseInt(forSec || "0", 10),
           cooldownSec: parseInt(cooldown || "300", 10),
           notificationChannelIds: channelIds,
@@ -405,7 +420,7 @@ function ChannelForm({ onSaved }: { onSaved: () => void }) {
     try {
       await apiFetch("/alerts/channels", {
         method: "POST",
-        body: JSON.stringify({ name, channelType: type, enabled: true, config: fields }),
+        body: JSON.stringify({ name, tenantId: ORG, channelType: type, enabled: true, config: fields }),
       });
       setName(""); setFields({}); onSaved();
     } catch {
