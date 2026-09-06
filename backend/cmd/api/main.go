@@ -45,6 +45,7 @@ import (
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/topolinks"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/topology"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/traceroute"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/workspacetopology"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -587,6 +588,18 @@ func main() {
 		mux.Handle("GET /api/v1/device-groups/members", authHandler.Middleware(devicegroups.MembersAPI{Repo: deviceGroupsRepo}))
 		mux.Handle("PUT /api/v1/device-groups/{id}/reorder", authHandler.Middleware(devicegroups.ReorderAPI{Repo: deviceGroupsRepo}))
 		mux.Handle("PUT /api/v1/device-group-assignments/{subjectType}/{subjectId}", authHandler.Middleware(devicegroups.AssignmentAPI{Repo: deviceGroupsRepo}))
+
+		workspaceTopologyRepo := workspacetopology.Repository{DB: db}
+		mux.Handle("GET /api/v1/workspace-topology/groups", authHandler.Middleware(workspacetopology.GroupsAPI{Repo: workspaceTopologyRepo}))
+		mux.Handle("POST /api/v1/workspace-topology/groups", authHandler.Middleware(workspacetopology.GroupsAPI{Repo: workspaceTopologyRepo}))
+		mux.Handle("PUT /api/v1/workspace-topology/groups/{id}", authHandler.Middleware(workspacetopology.GroupAPI{Repo: workspaceTopologyRepo}))
+		mux.Handle("DELETE /api/v1/workspace-topology/groups/{id}", authHandler.Middleware(workspacetopology.GroupAPI{Repo: workspaceTopologyRepo}))
+		mux.Handle("GET /api/v1/workspace-topology/groups/{id}/full", authHandler.Middleware(workspacetopology.GroupFullAPI{Repo: workspaceTopologyRepo}))
+		mux.Handle("POST /api/v1/workspace-topology/groups/{id}/devices", authHandler.Middleware(workspacetopology.DevicesAPI{Repo: workspaceTopologyRepo}))
+		mux.Handle("PUT /api/v1/workspace-topology/devices/{id}", authHandler.Middleware(workspacetopology.DeviceAPI{Repo: workspaceTopologyRepo}))
+		mux.Handle("DELETE /api/v1/workspace-topology/devices/{id}", authHandler.Middleware(workspacetopology.DeviceAPI{Repo: workspaceTopologyRepo}))
+		mux.Handle("POST /api/v1/workspace-topology/groups/{id}/links", authHandler.Middleware(workspacetopology.LinksAPI{Repo: workspaceTopologyRepo}))
+		mux.Handle("DELETE /api/v1/workspace-topology/links/{id}", authHandler.Middleware(workspacetopology.LinkAPI{Repo: workspaceTopologyRepo}))
 
 		// Configuration backup/restore -- a JSON export/import of devices,
 		// tags, device groups, notification channels and alert rules

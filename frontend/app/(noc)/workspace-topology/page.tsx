@@ -41,8 +41,16 @@ export default function WorkspaceTopologyPage() {
   const runDiscovery = useWorkspaceStore((s) => s.runDiscovery);
   const discovering = useWorkspaceStore((s) => s.discovering);
   const tickMetrics = useWorkspaceStore((s) => s.tickMetrics);
+  const loadGroups = useWorkspaceStore((s) => s.loadGroups);
 
   const [newGroupName, setNewGroupName] = useState("");
+
+  // Load persisted groups (and, via setActiveGroup once one becomes active,
+  // that group's devices/links) once on mount.
+  useEffect(() => {
+    loadGroups();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Real-time monitoring tick: every 5s, advance every visible device's
   // mocked metrics and evaluate alert thresholds. Swappable for a
