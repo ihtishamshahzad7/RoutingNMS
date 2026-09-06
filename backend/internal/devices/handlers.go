@@ -98,6 +98,43 @@ func (h Handler) UpdateSNMP(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "deviceId": id, "snmpEnabled": req.Enabled, "snmpVersion": req.Version, "snmpPort": req.Port})
 }
 
+// UpdateEnabled backs PUT /api/v1/devices/{id}/pause -- mirrors Uptime
+// Kuma's pauseMonitor/resumeMonitor: flips the device's `enabled` flag
+// without deleting it or losing any configuration. A paused (disabled)
+// device is skipped by every poller, since they all already select from
+// Repository.ListAllEnabled (WHERE enabled=true) -- no poller changes
+// needed, this handler is the only new code required to make pause take
+// effect everywhere monitoring happens.
+func (h Handler) UpdateEnabled(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "device ID is required", 400)
+		return
+	}
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON", 400)
+		return
+	}
+	if err := h.Repo.SetEnabled(r.Context(), id, req.Enabled); err != nil {
+		http.Error(w, "failed to update device state: "+err.Error(), 500)
+		return
+	}
+	d, err := h.Repo.GetByID(r.Context(), id)
+	if err != nil {
+		http.Error(w, "device not found", 404)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(d)
+}
+
 // UpdateHTTPCheck backs PUT /api/v1/devices/{id}/http-check -- configures
 // the optional HTTP(S)+keyword monitor ported from Uptime Kuma.
 func (h Handler) UpdateHTTPCheck(w http.ResponseWriter, r *http.Request) {
