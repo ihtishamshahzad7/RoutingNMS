@@ -8,6 +8,12 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 
+type GroupMember = {
+  subjectType: "device" | "olt";
+  subjectId: string;
+  label: string;
+  status: "up" | "down" | "degraded" | "unknown";
+};
 type ItemStatus = {
   subjectType: "device" | "olt" | "devicegroup";
   subjectId: string;
@@ -15,6 +21,10 @@ type ItemStatus = {
   status: "up" | "down" | "degraded" | "unknown";
   certExpiryDays?: number;
   since?: string;
+  // Only present for subjectType "devicegroup" -- one row per group member
+  // with its own resolved status, matching Kuma's real monitor-group
+  // per-member breakdown (see backend statuspage.GroupMember).
+  members?: GroupMember[];
 };
 type PublicPage = {
   slug: string;
@@ -38,6 +48,10 @@ export default function PublicStatusPage() {
   const [page, setPage] = useState<PublicPage | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  // Device-group items default expanded (Kuma always shows the per-member
+  // breakdown under a group heading); tracked by subjectId so a visitor can
+  // still collapse a large group without losing state across the 30s poll.
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
   async function load() {
     try {
@@ -100,22 +114,61 @@ export default function PublicStatusPage() {
           {page.items.length === 0 ? (
             <div className="p-8 text-center text-slate-500">No monitors configured on this page yet.</div>
           ) : (
-            page.items.map((it, i) => (
-              <div key={`${it.subjectType}-${it.subjectId}`} className={`flex items-center justify-between px-6 py-4 ${i !== 0 ? "border-t border-slate-800" : ""}`}>
-                <span className="font-medium">{it.label}</span>
-                <span className="flex items-center gap-4 text-sm">
-                  {page.showCertificateExpiry && it.certExpiryDays != null && (
-                    <span className={it.certExpiryDays <= 14 ? "text-amber-400" : "text-slate-500"}>
-                      Cert expires in {it.certExpiryDays}d
+            page.items.map((it, i) => {
+              const isGroup = it.subjectType === "devicegroup" && it.members && it.members.length > 0;
+              const collapsed = collapsedGroups.has(it.subjectId);
+              return (
+                <div key={`${it.subjectType}-${it.subjectId}`} className={i !== 0 ? "border-t border-slate-800" : ""}>
+                  <div
+                    className={`flex items-center justify-between px-6 py-4 ${isGroup ? "cursor-pointer select-none" : ""}`}
+                    onClick={
+                      isGroup
+                        ? () =>
+                            setCollapsedGroups((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(it.subjectId)) next.delete(it.subjectId);
+                              else next.add(it.subjectId);
+                              return next;
+                            })
+                        : undefined
+                    }
+                  >
+                    <span className="flex items-center gap-2 font-medium">
+                      {isGroup && <span className="text-xs text-slate-500">{collapsed ? "▶" : "▼"}</span>}
+                      {it.label}
+                      {isGroup && <span className="text-xs font-normal text-slate-500">({it.members!.length})</span>}
                     </span>
+                    <span className="flex items-center gap-4 text-sm">
+                      {page.showCertificateExpiry && it.certExpiryDays != null && (
+                        <span className={it.certExpiryDays <= 14 ? "text-amber-400" : "text-slate-500"}>
+                          Cert expires in {it.certExpiryDays}d
+                        </span>
+                      )}
+                      <span className={`flex items-center gap-2 font-semibold ${STATUS_STYLE[it.status].text}`}>
+                        <span className={`h-2 w-2 rounded-full ${STATUS_STYLE[it.status].dot}`} />
+                        {STATUS_STYLE[it.status].label}
+                      </span>
+                    </span>
+                  </div>
+                  {isGroup && !collapsed && (
+                    <div className="bg-slate-950/40">
+                      {it.members!.map((m, mi) => (
+                        <div
+                          key={`${m.subjectType}-${m.subjectId}`}
+                          className={`flex items-center justify-between px-6 py-2.5 pl-12 text-sm ${mi !== 0 ? "border-t border-slate-800/60" : ""}`}
+                        >
+                          <span className="text-slate-300">{m.label}</span>
+                          <span className={`flex items-center gap-2 font-medium ${STATUS_STYLE[m.status].text}`}>
+                            <span className={`h-1.5 w-1.5 rounded-full ${STATUS_STYLE[m.status].dot}`} />
+                            {STATUS_STYLE[m.status].label}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   )}
-                  <span className={`flex items-center gap-2 font-semibold ${STATUS_STYLE[it.status].text}`}>
-                    <span className={`h-2 w-2 rounded-full ${STATUS_STYLE[it.status].dot}`} />
-                    {STATUS_STYLE[it.status].label}
-                  </span>
-                </span>
-              </div>
-            ))
+                </div>
+              );
+            })
           )}
         </div>
 

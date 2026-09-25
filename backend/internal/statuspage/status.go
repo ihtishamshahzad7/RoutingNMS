@@ -16,6 +16,21 @@ type ItemStatus struct {
 	Status      string     `json:"status"` // "up" | "down" | "degraded" | "unknown"
 	CertExpiry  *int       `json:"certExpiryDays,omitempty"`
 	Since       *time.Time `json:"since,omitempty"`
+	// Members is populated only for SubjectType=="devicegroup": one entry per
+	// device_group_members row, each with its own resolved status, matching
+	// Kuma's real per-member breakdown under a group heading (see
+	// resolveDeviceGroup). Empty/omitted for "device"/"olt" items.
+	Members []GroupMember `json:"members,omitempty"`
+}
+
+// GroupMember is one row of a device-group status-page item's per-member
+// breakdown -- deliberately a small subset of ItemStatus (no CertExpiry,
+// no nested Members) since a status page never nests groups within groups.
+type GroupMember struct {
+	SubjectType string `json:"subjectType"` // "device" | "olt"
+	SubjectID   string `json:"subjectId"`
+	Label       string `json:"label"`
+	Status      string `json:"status"`
 }
 
 // StatusResolver computes the current up/down status for status-page items.
@@ -157,10 +172,10 @@ func statusRank(status string) int {
 // resolveDeviceGroup aggregates a whole device_groups group into a single
 // status-page item: the group's own name becomes the label (unless
 // overridden), and the status is the worst status among its device/OLT
-// members (Kuma's real monitor-group page instead lists every member
-// individually under a group heading; this v1 simplification shows one
-// aggregate row per group -- see claude/uptime-kuma-parity.md item 32 for
-// the fuller per-member breakdown as a flagged follow-up).
+// members. Also populates st.Members with each member's own resolved
+// status/label, matching Kuma's real monitor-group page (every member
+// listed individually under a group heading) -- closes the "one aggregate
+// row per group" v1 simplification flagged since feature 32/item 43.
 func (s StatusResolver) resolveDeviceGroup(ctx context.Context, st *ItemStatus) error {
 	var name string
 	if err := s.DB.QueryRow(ctx, `SELECT name FROM device_groups WHERE id=$1::bigint`, st.SubjectID).Scan(&name); err != nil {
@@ -177,23 +192,33 @@ func (s StatusResolver) resolveDeviceGroup(ctx context.Context, st *ItemStatus) 
 	}
 	defer rows.Close()
 	best := "unknown"
+	members := make([]GroupMember, 0)
 	for rows.Next() {
 		var memberType, memberID string
 		if err := rows.Scan(&memberType, &memberID); err != nil {
 			return err
 		}
-		var memberStatus string
+		var memberStatus, memberLabel string
 		switch memberType {
 		case "device":
 			memberStatus, _, err = s.deviceStatus(ctx, memberID, false)
+			memberLabel = memberID
+			if nameErr := s.DB.QueryRow(ctx, `SELECT name FROM devices WHERE id::text=$1`, memberID).Scan(&memberLabel); nameErr != nil {
+				memberLabel = memberID
+			}
 		case "olt":
 			memberStatus, err = s.oltStatus(ctx, memberID)
+			memberLabel = memberID
+			if nameErr := s.DB.QueryRow(ctx, `SELECT name FROM olts WHERE id=$1`, memberID).Scan(&memberLabel); nameErr != nil {
+				memberLabel = memberID
+			}
 		default:
 			continue
 		}
 		if err != nil {
 			return err
 		}
+		members = append(members, GroupMember{SubjectType: memberType, SubjectID: memberID, Label: memberLabel, Status: memberStatus})
 		if statusRank(memberStatus) > statusRank(best) {
 			best = memberStatus
 		}
@@ -202,5 +227,6 @@ func (s StatusResolver) resolveDeviceGroup(ctx context.Context, st *ItemStatus) 
 		return err
 	}
 	st.Status = best
+	st.Members = members
 	return nil
 }
