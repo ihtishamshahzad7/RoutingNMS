@@ -54,6 +54,12 @@ type Link struct {
 	TargetPort string
 	Discovered bool
 	CreatedAt  time.Time
+	// Validation state (migration 0043) -- see linkvalidation.go for how
+	// these get set. ValidationStatus defaults to "unverified" until a
+	// validation pass runs.
+	ValidationStatus string
+	ValidationDetail string
+	ValidatedAt      *time.Time
 }
 
 type Repository struct{ DB *pgxpool.Pool }
@@ -243,7 +249,7 @@ func (r Repository) LinksOf(ctx context.Context, groupID int64) ([]Link, error) 
 		return nil, fmt.Errorf("workspacetopology repository is not initialized")
 	}
 	rows, err := r.DB.Query(ctx,
-		`SELECT id,group_id,source_id,target_id,source_port,target_port,discovered,created_at
+		`SELECT id,group_id,source_id,target_id,source_port,target_port,discovered,created_at,validation_status,validation_detail,validated_at
 		 FROM workspace_topology_links WHERE group_id=$1 ORDER BY created_at`, groupID)
 	if err != nil {
 		return nil, err
@@ -252,7 +258,7 @@ func (r Repository) LinksOf(ctx context.Context, groupID int64) ([]Link, error) 
 	out := []Link{}
 	for rows.Next() {
 		var l Link
-		if err := rows.Scan(&l.ID, &l.GroupID, &l.SourceID, &l.TargetID, &l.SourcePort, &l.TargetPort, &l.Discovered, &l.CreatedAt); err != nil {
+		if err := rows.Scan(&l.ID, &l.GroupID, &l.SourceID, &l.TargetID, &l.SourcePort, &l.TargetPort, &l.Discovered, &l.CreatedAt, &l.ValidationStatus, &l.ValidationDetail, &l.ValidatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, l)
@@ -274,9 +280,9 @@ func (r Repository) CreateLink(ctx context.Context, l Link) (Link, error) {
 	err := r.DB.QueryRow(ctx,
 		`INSERT INTO workspace_topology_links (id,group_id,source_id,target_id,source_port,target_port,discovered)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7)
-		 RETURNING id,group_id,source_id,target_id,source_port,target_port,discovered,created_at`,
+		 RETURNING id,group_id,source_id,target_id,source_port,target_port,discovered,created_at,validation_status,validation_detail,validated_at`,
 		l.ID, l.GroupID, l.SourceID, l.TargetID, l.SourcePort, l.TargetPort, l.Discovered).
-		Scan(&out.ID, &out.GroupID, &out.SourceID, &out.TargetID, &out.SourcePort, &out.TargetPort, &out.Discovered, &out.CreatedAt)
+		Scan(&out.ID, &out.GroupID, &out.SourceID, &out.TargetID, &out.SourcePort, &out.TargetPort, &out.Discovered, &out.CreatedAt, &out.ValidationStatus, &out.ValidationDetail, &out.ValidatedAt)
 	return out, err
 }
 
@@ -285,5 +291,18 @@ func (r Repository) DeleteLink(ctx context.Context, id string) error {
 		return fmt.Errorf("workspacetopology repository is not initialized")
 	}
 	_, err := r.DB.Exec(ctx, `DELETE FROM workspace_topology_links WHERE id=$1`, id)
+	return err
+}
+
+// SetLinkValidation records the result of a validation pass (see
+// linkvalidation.go) against one link, stamping validated_at with the
+// current time.
+func (r Repository) SetLinkValidation(ctx context.Context, id, status, detail string) error {
+	if r.DB == nil {
+		return fmt.Errorf("workspacetopology repository is not initialized")
+	}
+	_, err := r.DB.Exec(ctx,
+		`UPDATE workspace_topology_links SET validation_status=$2, validation_detail=$3, validated_at=NOW() WHERE id=$1`,
+		id, status, detail)
 	return err
 }

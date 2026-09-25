@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Plus, Pencil, Trash2, Router, Server, ShieldAlert, Network as NetworkIcon, Radar, LayoutGrid } from "lucide-react";
+import { Plus, Pencil, Trash2, Router, Server, ShieldAlert, Network as NetworkIcon, Radar, LayoutGrid, ShieldCheck } from "lucide-react";
 import styles from "./glass.module.css";
 import { useWorkspaceStore } from "./store";
 import { useLiveStream } from "./useLiveStream";
@@ -42,6 +42,9 @@ export default function WorkspaceTopologyPage() {
   const runDiscovery = useWorkspaceStore((s) => s.runDiscovery);
   const discovering = useWorkspaceStore((s) => s.discovering);
   const autoLayout = useWorkspaceStore((s) => s.autoLayout);
+  const validateLinks = useWorkspaceStore((s) => s.validateLinks);
+  const validating = useWorkspaceStore((s) => s.validating);
+  const links = useWorkspaceStore((s) => s.links);
   const tickMetrics = useWorkspaceStore((s) => s.tickMetrics);
   const loadGroups = useWorkspaceStore((s) => s.loadGroups);
   const liveStreamConnected = useWorkspaceStore((s) => s.liveStreamConnected);
@@ -66,6 +69,7 @@ export default function WorkspaceTopologyPage() {
 
   const activeGroup = groups.find((g) => g.id === activeGroupId);
   const groupDevices = devices.filter((d) => d.groupId === activeGroupId);
+  const groupLinks = links.filter((l) => l.groupId === activeGroupId);
 
   // Real-time push for linked devices' up/latency state (see
   // useLiveStream.ts + backend workspacetopology.LiveHub); a no-op when no
@@ -201,6 +205,20 @@ export default function WorkspaceTopologyPage() {
               >
                 <LayoutGrid size={14} />
                 Auto Layout
+              </button>
+              <button
+                className={styles.paletteButton}
+                data-busy={validating}
+                onClick={() => activeGroup && validateLinks(activeGroup.id)}
+                disabled={groupLinks.length === 0 || validating}
+                title={
+                  groupLinks.length === 0
+                    ? "Add a link first"
+                    : "Check every link's ports against real SNMP interface state"
+                }
+              >
+                <ShieldCheck size={14} />
+                {validating ? "Validating…" : "Validate Links"}
               </button>
               {groupDevices.some((d) => d.linkedDeviceId) && (
                 <span

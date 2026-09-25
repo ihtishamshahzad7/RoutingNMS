@@ -61,6 +61,8 @@ type WorkspaceState = {
 
   runDiscovery: (groupId: string, seedDeviceId: string) => Promise<void>;
   autoLayout: (groupId: string) => void;
+  validateLinks: (groupId: string) => Promise<void>;
+  validating: boolean;
 
   selectDevice: (id: string | null) => void;
   tickMetrics: () => void;
@@ -154,6 +156,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   liveStreamConnected: false,
   selectedDeviceId: null,
   discovering: false,
+  validating: false,
   loaded: false,
 
   // Loads persisted groups from the backend (call once on mount). Devices
@@ -284,6 +287,31 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   removeLink: (id) => {
     set((s) => ({ links: s.links.filter((l) => l.id !== id) }));
     persist(() => apiFetch(`/workspace-topology/links/${id}`, { method: "DELETE" }));
+  },
+
+  // Closes the "link validation" follow-up flagged since feature 32: for
+  // every link in the group, the backend walks both endpoints' real SNMP
+  // interfaces (reusing the same endpoint topology-links' suggestion
+  // <datalist> already calls) and checks the stored port names actually
+  // exist and are up. An on-demand action (not a background poller) since
+  // each link costs a live SNMP round trip -- same tradeoff as Discover.
+  validateLinks: async (groupId) => {
+    set({ validating: true });
+    try {
+      const validated = await apiFetch<CanvasLink[]>(`/workspace-topology/groups/${groupId}/validate-links`, {
+        method: "POST",
+      });
+      const byId = new Map(validated.map((l) => [l.id, l]));
+      set((s) => ({
+        links: s.links.map((l) => (l.groupId === groupId && byId.has(l.id) ? { ...l, ...byId.get(l.id) } : l)),
+      }));
+    } catch (err) {
+      if (err instanceof ApiError || err instanceof Error) {
+        console.warn("workspace-topology: link validation failed", err.message);
+      }
+    } finally {
+      set({ validating: false });
+    }
   },
 
   runDiscovery: async (groupId, seedDeviceId) => {

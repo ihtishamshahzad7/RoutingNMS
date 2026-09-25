@@ -46,6 +46,12 @@ type LinkDTO struct {
 	SourcePort string `json:"sourcePort,omitempty"`
 	TargetPort string `json:"targetPort,omitempty"`
 	Discovered bool   `json:"discovered"`
+	// Validation state (migration 0043 / linkvalidation.go). ValidationStatus
+	// is always present ("unverified" until a validation pass has run);
+	// ValidatedAt is omitted until one has.
+	ValidationStatus string  `json:"validationStatus"`
+	ValidationDetail string  `json:"validationDetail,omitempty"`
+	ValidatedAt      *string `json:"validatedAt,omitempty"`
 }
 
 type FullGroupDTO struct {
@@ -66,10 +72,16 @@ func deviceToDTO(d Device) DeviceDTO {
 }
 
 func linkToDTO(l Link) LinkDTO {
-	return LinkDTO{
+	dto := LinkDTO{
 		ID: l.ID, GroupID: strconv.FormatInt(l.GroupID, 10), SourceID: l.SourceID, TargetID: l.TargetID,
 		SourcePort: l.SourcePort, TargetPort: l.TargetPort, Discovered: l.Discovered,
+		ValidationStatus: l.ValidationStatus, ValidationDetail: l.ValidationDetail,
 	}
+	if l.ValidatedAt != nil {
+		s := l.ValidatedAt.Format(time.RFC3339)
+		dto.ValidatedAt = &s
+	}
+	return dto
 }
 
 // GroupsAPI backs GET/POST /api/v1/workspace-topology/groups.
@@ -349,4 +361,36 @@ func (a DiscoveryAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Devices []DeviceDTO `json:"devices"`
 		Links   []LinkDTO   `json:"links"`
 	}{Devices: deviceDTOs, Links: linkDTOs})
+}
+
+// LinkValidationAPI backs POST /api/v1/workspace-topology/groups/{id}/
+// validate-links -- an on-demand action (a toolbar button, not a
+// background poller) since each link needing validation costs a live
+// SNMP round trip per endpoint device. Longer timeout for the same reason
+// DiscoveryAPI has one.
+type LinkValidationAPI struct{ Validator LinkValidator }
+
+func (a LinkValidationAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
+	defer cancel()
+
+	groupID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, "invalid group id", http.StatusBadRequest)
+		return
+	}
+	links, err := a.Validator.ValidateGroup(ctx, groupID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	linkDTOs := make([]LinkDTO, 0, len(links))
+	for _, l := range links {
+		linkDTOs = append(linkDTOs, linkToDTO(l))
+	}
+	writeJSON(w, linkDTOs)
 }

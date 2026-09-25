@@ -183,6 +183,25 @@
   stroke-dasharray: 4 4;
 }
 
+/* Link validation status (feature: link validation) -- overrides
+   .linkPulse's default cyan once a real SNMP check has run. "unverified"
+   (no class applied) keeps the original cyan look so links nobody has
+   validated yet don't look alarming. */
+.linkValidUp {
+  stroke: #34d399;
+  filter: drop-shadow(0 0 3px rgba(52, 211, 153, 0.6));
+}
+.linkValidDown {
+  stroke: #f87171;
+  filter: drop-shadow(0 0 3px rgba(248, 113, 113, 0.6));
+}
+.linkValidNotFound,
+.linkValidError {
+  stroke: #fbbf24;
+  stroke-dasharray: 2 3;
+  filter: drop-shadow(0 0 3px rgba(251, 191, 36, 0.5));
+}
+
 .monitorPanel {
   composes: glassPanel;
   position: absolute;

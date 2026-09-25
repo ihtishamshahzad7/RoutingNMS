@@ -26,6 +26,13 @@ export type CanvasDevice = {
   linkedDeviceId?: string;
 };
 
+// Link validation state (backend workspacetopology migration 0043 / see
+// linkvalidation.go): "unverified" until a validation pass runs, or when
+// one/both ends aren't linked to a real SNMP device; "up"/"down"/
+// "not_found" after a real SNMP interface check; "error" when the walk
+// itself failed (device unreachable, SNMP disabled, timeout).
+export type LinkValidationStatus = "unverified" | "up" | "down" | "not_found" | "error";
+
 export type CanvasLink = {
   id: string;
   groupId: string;
@@ -34,6 +41,9 @@ export type CanvasLink = {
   sourcePort?: string;
   targetPort?: string;
   discovered: boolean; // true if created by the auto-discovery engine
+  validationStatus?: LinkValidationStatus;
+  validationDetail?: string;
+  validatedAt?: string;
 };
 
 export type MetricPoint = { t: number; value: number };

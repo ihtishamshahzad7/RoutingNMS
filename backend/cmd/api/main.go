@@ -604,6 +604,7 @@ func main() {
 		workspaceLiveHub := workspacetopology.NewLiveHub(workspaceTopologyRepo)
 		go workspaceLiveHub.Run(ctx)
 		mux.Handle("GET /api/v1/workspace-topology/groups/{id}/stream", authHandler.Middleware(workspaceLiveHub))
+		mux.Handle("POST /api/v1/workspace-topology/groups/{id}/validate-links", authHandler.Middleware(workspacetopology.LinkValidationAPI{Validator: workspacetopology.LinkValidator{Repo: workspaceTopologyRepo, Devices: devicesRepo}}))
 
 		// Configuration backup/restore -- a JSON export/import of devices,
 		// tags, device groups, notification channels and alert rules

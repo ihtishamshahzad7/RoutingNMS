@@ -127,6 +127,18 @@ export default function Canvas({ groupId }: { groupId: string }) {
             const a = findDevice(link.sourceId);
             const b = findDevice(link.targetId);
             if (!a || !b) return null;
+            // "unverified" (the default, or absent on an optimistic
+            // just-created link) gets no extra class -- keeps the
+            // original cyan look rather than implying a check already
+            // happened. See glass.module.css for the color meanings.
+            const validationClass =
+              link.validationStatus === "up"
+                ? styles.linkValidUp
+                : link.validationStatus === "down"
+                ? styles.linkValidDown
+                : link.validationStatus === "not_found" || link.validationStatus === "error"
+                ? styles.linkValidNotFound
+                : "";
             return (
               <line
                 key={link.id}
@@ -134,8 +146,16 @@ export default function Canvas({ groupId }: { groupId: string }) {
                 y1={a.y}
                 x2={b.x}
                 y2={b.y}
-                className={`${styles.linkPulse} ${link.discovered ? styles.linkDiscovered : ""}`}
-              />
+                className={`${styles.linkPulse} ${link.discovered ? styles.linkDiscovered : ""} ${validationClass}`}
+                // The parent <svg> disables pointer events (it's a
+                // decorative overlay -- the device overlay div below is
+                // the interactive layer), so a validated line needs its
+                // own pointer-events override for its hover tooltip to
+                // actually fire.
+                style={link.validationDetail ? { pointerEvents: "stroke", cursor: "default" } : undefined}
+              >
+                {link.validationDetail && <title>{link.validationDetail}</title>}
+              </line>
             );
           })}
         </g>
