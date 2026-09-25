@@ -32,6 +32,7 @@ import (
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/ping"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/provisioning"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/push"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/rbac"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/retention"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/sites"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/snmp"
@@ -620,6 +621,15 @@ func main() {
 		retentionAPI := tenants.RetentionAPI{Repo: tenants.Repository{DB: db}}
 		mux.Handle("GET /api/v1/tenants/{id}/retention", authHandler.Middleware(retentionAPI))
 		mux.Handle("PUT /api/v1/tenants/{id}/retention", authHandler.Middleware(retentionAPI))
+
+		// Phase 0.1 (RoutingNMS build blueprint): RBAC foundation. Only
+		// /api/v1/roles is actually RequirePermission-gated in this
+		// increment (proof that the middleware works end to end); every
+		// other existing route is untouched -- see internal/rbac's package
+		// doc comment for the retrofit-scope decision.
+		rbacRepo := rbac.Repository{DB: db}
+		mux.Handle("GET /api/v1/roles", authHandler.Middleware(rbac.RequirePermission(rbacRepo, "role.manage")(rbac.RolesAPI{Repo: rbacRepo})))
+		mux.Handle("GET /api/v1/auth/permissions", authHandler.Middleware(rbac.PermissionsAPI{Repo: rbacRepo}))
 
 		// Sprint 3 — ISP features: physical sites, wireless access points,
 		// and subscriber customer connections (migration 0018). Session-authed
