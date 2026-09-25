@@ -1,0 +1,181 @@
+/*
+ * Dashboard-only grid + widget-frame styling, scoped via CSS Modules so it
+ * never leaks into (or is affected by) the rest of the app's shared
+ * design-system classes (bg-[#161B22] etc, feature 9). The color values
+ * below are the *same* tokens already used app-wide -- this file only adds
+ * the grid geometry and the widget-chrome (drag handle, "..." menu,
+ * gradient override hook) the screenshot-matched layout needs, it does not
+ * introduce a second palette.
+ */
+
+.statRow {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 900px) {
+  .statRow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.dashLg {
+  grid-column: span 7;
+}
+.dashMd {
+  grid-column: span 5;
+}
+
+@media (max-width: 1100px) {
+  .dashLg,
+  .dashMd {
+    grid-column: span 12;
+  }
+}
+
+.widget {
+  border: 1px solid #21262d;
+  background: #161b22;
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  min-height: 260px;
+}
+.widget[data-dragging="true"] {
+  opacity: 0.45;
+  border-color: #58a6ff;
+}
+.widget[data-drop-target="true"] {
+  border-color: #58a6ff;
+  box-shadow: 0 0 0 1px #58a6ff inset;
+}
+
+.widgetHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  cursor: grab;
+}
+.widgetHead:active {
+  cursor: grabbing;
+}
+
+.widgetTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e6edf3;
+}
+
+.widgetBody {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.menuBtn {
+  border: none;
+  background: transparent;
+  color: #8b949e;
+  cursor: pointer;
+  padding: 3px;
+  border-radius: 4px;
+  line-height: 0;
+}
+.menuBtn:hover {
+  background: #21262d;
+  color: #e6edf3;
+}
+
+.menuPanel {
+  position: absolute;
+  right: 0;
+  top: 26px;
+  z-index: 30;
+  width: 176px;
+  border: 1px solid #21262d;
+  background: #0d1117;
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: #e6edf3;
+  background: transparent;
+  border: none;
+  text-align: left;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.menuItem:hover {
+  background: #1c2128;
+}
+.menuItemDanger {
+  composes: menuItem;
+  color: #f78166;
+}
+.swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 1px solid #30363d;
+}
+
+.toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  position: relative;
+}
+.toolbarBtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #21262d;
+  background: #161b22;
+  color: #e6edf3;
+  font-size: 11px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.toolbarBtn:hover {
+  background: #1c2128;
+}
+.toolbarBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.dropPanel {
+  position: absolute;
+  right: 0;
+  top: 32px;
+  z-index: 40;
+  width: 220px;
+  border: 1px solid #21262d;
+  background: #0d1117;
+  border-radius: 8px;
+  padding: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+.dropPanelHint {
+  font-size: 10px;
+  color: #8b949e;
+  padding: 4px 6px 8px;
+}
