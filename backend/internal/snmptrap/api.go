@@ -17,7 +17,13 @@ func (a RulesAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		rules, err := a.Repo.ListRules(ctx, "") // "" = every tenant's rules, unchanged listing scope
+		// snmptrap.Repository.ListRules has no tenant parameter -- this
+		// package predates alert_rules tenant scoping (feature 23) and
+		// was never given one; a prior edit here mistakenly called it as
+		// if it had alerts.Repository's two-arg signature. Never caught
+		// in the sandbox (no `go build` capability there), surfaced on
+		// the first real production build.
+		rules, err := a.Repo.ListRules(ctx)
 		if err != nil {
 			http.Error(w, "failed to load trap rules", http.StatusInternalServerError)
 			return

@@ -158,12 +158,18 @@ type Handler struct {
 	// tolerated (badges just never reports the maintenance state), so
 	// existing test/wiring code that doesn't set it keeps working.
 	Maintenance maintenance.Checker
-	// Ping answers whether a device is currently "pending" (mid-retry,
-	// see internal/ping.Poller.IsPending). Nil is tolerated the same way
-	// as Maintenance -- badges just never reports the pending state,
-	// which is also correct for any device this poller doesn't track
-	// (non-ICMP-monitored devices, or ICMP devices with retries<=1).
-	Ping *ping.Poller
+	// PingPoller answers whether a device is currently "pending"
+	// (mid-retry, see internal/ping.Poller.IsPending). Nil is tolerated
+	// the same way as Maintenance -- badges just never reports the
+	// pending state, which is also correct for any device this poller
+	// doesn't track (non-ICMP-monitored devices, or ICMP devices with
+	// retries<=1). Named PingPoller, not Ping, because Handler already
+	// has a Ping *method* (the /badge/{deviceId}/ping handler below) --
+	// Go doesn't allow a field and a method with the same name on the
+	// same type, and this package's own build was never actually run in
+	// the sandbox that introduced the collision (no module-proxy access
+	// there), so it wasn't caught until a real `go build` on production.
+	PingPoller *ping.Poller
 }
 
 func (h Handler) writeSVG(w http.ResponseWriter, svg string) {
@@ -263,7 +269,7 @@ func (h Handler) Status(w http.ResponseWriter, r *http.Request) {
 		h.writeSVG(w, Render(label, queryParam(r, "pausedLabel", "Paused"), colorParam(r, "pausedColor", ColorPaused), styleParam(r)))
 		return
 	}
-	if h.Ping != nil && h.Ping.IsPending(deviceID) {
+	if h.PingPoller != nil && h.PingPoller.IsPending(deviceID) {
 		h.writeSVG(w, Render(label, queryParam(r, "pendingLabel", "Pending"), colorParam(r, "pendingColor", ColorPending), styleParam(r)))
 		return
 	}
