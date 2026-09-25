@@ -6,6 +6,7 @@ import type {
   CanvasLink,
   DeviceKind,
   LiveMetrics,
+  LiveReading,
   WorkspaceAlert,
   WorkspaceGroup,
 } from "./types";
@@ -33,6 +34,13 @@ type WorkspaceState = {
   links: CanvasLink[];
   alerts: WorkspaceAlert[];
   metricsByDevice: MetricsByDevice;
+  // Real, server-pushed up/latency state for linked devices (see
+  // useLiveStream.ts), keyed by canvas device id. Devices with no entry
+  // here (unlinked, or not yet received a first push) fall back to the
+  // client-side mock entirely -- see MonitoringPanel's LIVE/SIMULATED
+  // badge, which reads this map to decide which label to show.
+  liveByDevice: Record<string, LiveReading>;
+  liveStreamConnected: boolean;
   selectedDeviceId: string | null;
   discovering: boolean;
   loaded: boolean;
@@ -56,6 +64,8 @@ type WorkspaceState = {
 
   selectDevice: (id: string | null) => void;
   tickMetrics: () => void;
+  applyLiveReadings: (readings: LiveReading[]) => void;
+  setLiveStreamConnected: (connected: boolean) => void;
 
   acknowledgeAlert: (id: string) => void;
   clearAcknowledged: () => void;
@@ -140,6 +150,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   links: [],
   alerts: [],
   metricsByDevice: {},
+  liveByDevice: {},
+  liveStreamConnected: false,
   selectedDeviceId: null,
   discovering: false,
   loaded: false,
@@ -376,6 +388,32 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         alerts: newAlerts.length ? [...newAlerts, ...s.alerts].slice(0, 200) : s.alerts,
       };
     }),
+
+  // Merges a server-pushed batch of real readings (from useLiveStream's
+  // EventSource) into liveByDevice, and -- for any device that has a real
+  // latencyMs this tick -- overwrites the mock latency series' most recent
+  // point with it, so the panel's Latency chart plots real numbers for
+  // linked devices instead of the random-walk mock, while bandwidth/CPU/
+  // memory (no real collector exists for those yet) keep advancing purely
+  // from the mock tick untouched.
+  applyLiveReadings: (readings) =>
+    set((s) => {
+      const liveByDevice = { ...s.liveByDevice };
+      const metricsByDevice = { ...s.metricsByDevice };
+      for (const r of readings) {
+        liveByDevice[r.deviceId] = r;
+        if (r.latencyMs != null) {
+          const current = metricsByDevice[r.deviceId];
+          if (current && current.latency.length > 0) {
+            const latency = current.latency.slice(0, -1).concat([{ t: Date.now(), value: r.latencyMs }]);
+            metricsByDevice[r.deviceId] = { ...current, latency };
+          }
+        }
+      }
+      return { liveByDevice, metricsByDevice };
+    }),
+
+  setLiveStreamConnected: (connected) => set({ liveStreamConnected: connected }),
 
   acknowledgeAlert: (id) =>
     set((s) => ({ alerts: s.alerts.map((a) => (a.id === id ? { ...a, acknowledged: true } : a)) })),

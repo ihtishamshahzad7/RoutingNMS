@@ -36,6 +36,11 @@ export default function MonitoringPanel({ deviceId, onClose }: { deviceId: strin
   const updateDevice = useWorkspaceStore((s) => s.updateDevice);
   const runDiscovery = useWorkspaceStore((s) => s.runDiscovery);
   const discovering = useWorkspaceStore((s) => s.discovering);
+  const liveReading = useWorkspaceStore((s) => s.liveByDevice[deviceId]);
+  // Real data only exists for linked + up-to-date-pushed devices, and only
+  // covers up/latency (see types.ts's LiveReading comment) -- bandwidth/
+  // CPU/memory always come from the client-side mock tick regardless.
+  const isLive = liveReading?.latencyMs != null;
 
   const [realDevices, setRealDevices] = useState<RealDevice[]>([]);
   useEffect(() => {
@@ -55,7 +60,36 @@ export default function MonitoringPanel({ deviceId, onClose }: { deviceId: strin
     <div className={styles.monitorPanel}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
-          <div style={{ fontWeight: 600 }}>{device.name}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontWeight: 600 }}>{device.name}</span>
+            <span
+              title={
+                isLive
+                  ? "Latency/up state pushed live from real device polling"
+                  : "Simulated data -- link this device to a real, monitored RoutingNMS device for real up/latency readings"
+              }
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                fontSize: 9.5,
+                fontWeight: 700,
+                letterSpacing: "0.04em",
+                textTransform: "uppercase",
+                padding: "1.5px 6px",
+                borderRadius: 999,
+                color: isLive ? "#34d399" : "#94a3b8",
+                background: isLive ? "rgba(52,211,153,0.12)" : "rgba(148,163,184,0.1)",
+                border: `1px solid ${isLive ? "rgba(52,211,153,0.3)" : "rgba(148,163,184,0.2)"}`,
+              }}
+            >
+              <span
+                className={isLive ? styles.livePulse : undefined}
+                style={{ width: 5, height: 5, borderRadius: 999, background: isLive ? "#34d399" : "#94a3b8" }}
+              />
+              {isLive ? "Live" : "Simulated"}
+            </span>
+          </div>
           <div style={{ fontSize: 12, color: "#94a3b8" }}>{device.kind} &middot; {device.address || "no address set"}</div>
         </div>
         <button onClick={onClose} style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer" }}>

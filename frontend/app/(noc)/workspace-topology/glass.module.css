@@ -236,6 +236,15 @@
   50% { opacity: 1; }
 }
 
+/* Small connection-status dot used by the live-updates pill (page.tsx) and
+   the MonitoringPanel LIVE badge -- CSS Modules locally scope @keyframes
+   names, so this animation must be applied via a class here rather than
+   an inline style="animation: pulse ..." string from JS, which would
+   reference the unscoped/renamed-away name and silently no-op. */
+.livePulse {
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
 .alertRow {
   display: flex;
   gap: 8px;

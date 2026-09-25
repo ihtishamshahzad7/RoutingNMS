@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Plus, Pencil, Trash2, Router, Server, ShieldAlert, Network as NetworkIcon, Radar, LayoutGrid } from "lucide-react";
 import styles from "./glass.module.css";
 import { useWorkspaceStore } from "./store";
+import { useLiveStream } from "./useLiveStream";
 import Canvas from "./Canvas";
 import MonitoringPanel from "./MonitoringPanel";
 import AlertBell from "./AlertBell";
@@ -43,6 +44,7 @@ export default function WorkspaceTopologyPage() {
   const autoLayout = useWorkspaceStore((s) => s.autoLayout);
   const tickMetrics = useWorkspaceStore((s) => s.tickMetrics);
   const loadGroups = useWorkspaceStore((s) => s.loadGroups);
+  const liveStreamConnected = useWorkspaceStore((s) => s.liveStreamConnected);
 
   const [newGroupName, setNewGroupName] = useState("");
 
@@ -64,6 +66,12 @@ export default function WorkspaceTopologyPage() {
 
   const activeGroup = groups.find((g) => g.id === activeGroupId);
   const groupDevices = devices.filter((d) => d.groupId === activeGroupId);
+
+  // Real-time push for linked devices' up/latency state (see
+  // useLiveStream.ts + backend workspacetopology.LiveHub); a no-op when no
+  // group is active. tickMetrics (below) keeps advancing the mock
+  // bandwidth/CPU/memory/fallback-latency series independently.
+  useLiveStream(activeGroup?.id ?? null);
 
   const handleCreateGroup = () => {
     const name = newGroupName.trim();
@@ -194,6 +202,36 @@ export default function WorkspaceTopologyPage() {
                 <LayoutGrid size={14} />
                 Auto Layout
               </button>
+              {groupDevices.some((d) => d.linkedDeviceId) && (
+                <span
+                  title={
+                    liveStreamConnected
+                      ? "Receiving real up/latency updates for linked devices"
+                      : "Connecting to the live updates stream…"
+                  }
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    marginLeft: "auto",
+                    fontSize: 11.5,
+                    color: liveStreamConnected ? "#34d399" : "#94a3b8",
+                    padding: "4px 10px",
+                  }}
+                >
+                  <span
+                    className={liveStreamConnected ? styles.livePulse : undefined}
+                    style={{
+                      width: 7,
+                      height: 7,
+                      borderRadius: 999,
+                      background: liveStreamConnected ? "#34d399" : "#475569",
+                      boxShadow: liveStreamConnected ? "0 0 6px #34d399" : "none",
+                    }}
+                  />
+                  {liveStreamConnected ? "Live" : "Connecting…"}
+                </span>
+              )}
             </div>
             <div style={{ position: "absolute", top: 16, right: activeGroup && selectedDeviceId ? 396 : 16, zIndex: 6, transition: "right 0.2s ease" }}>
               <AlertBell groupId={activeGroup.id} />

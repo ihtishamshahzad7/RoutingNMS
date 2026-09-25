@@ -59,6 +59,19 @@ export type PowerMetrics = {
   psu: { id: string; healthy: boolean; label: string }[];
 };
 
+// One linked canvas device's real, server-pushed up/latency reading (see
+// useLiveStream.ts + backend workspacetopology.Reading). Only fields the
+// backend actually has data for are present -- bandwidth/CPU/memory have
+// no real collector anywhere in this codebase yet, so they are
+// deliberately absent here rather than faked, and stay on the existing
+// client-side mock tick.
+export type LiveReading = {
+  deviceId: string;
+  linkedDeviceId: string;
+  up?: boolean;
+  latencyMs?: number;
+};
+
 export type AlertSeverity = "critical" | "warning" | "info";
 
 export type WorkspaceAlert = {
