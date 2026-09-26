@@ -20,6 +20,7 @@ import (
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/auth"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/backup"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/badges"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/configbackup"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/customers"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/devicegroups"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/devices"
@@ -586,6 +587,23 @@ func main() {
 		mux.Handle("PUT /api/v1/devices/{id}/provisioning", authHandler.Middleware(provisioning.AssignAPI{Templates: provisioningRepo, Devices: devicesRepo}))
 		mux.Handle("GET /api/v1/devices/{id}/provisioning/preview", authHandler.Middleware(provisioning.PreviewAPI{Templates: provisioningRepo, Devices: devicesRepo, Salt: provisionSalt, BaseURL: provisionBaseURL, Token: provisionToken}))
 		mux.Handle("GET /api/v1/provision/routeros/{serial}", provisioning.FetchAPI{Templates: provisioningRepo, Devices: devicesRepo, Salt: provisionSalt, Token: provisionToken})
+
+		// Config Backup (Feature 1.6): point-in-time snapshots of a
+		// device's own running config, with version history + diff.
+		// Ingestion is manual paste/upload (session-authed) or a
+		// scheduled RouterOS device-push (shared-token, same idiom as
+		// the provisioning FetchAPI above -- see SetupAPI for the exact
+		// scheduler script an operator installs on the router).
+		configBackupRepo := configbackup.Repository{DB: db}
+		configBackupToken := os.Getenv("CONFIG_BACKUP_TOKEN")
+		configBackupBaseURL := strings.TrimSuffix(os.Getenv("PUBLIC_API_BASE_URL"), "/")
+		mux.Handle("GET /api/v1/devices/{id}/config-backups", authHandler.Middleware(configbackup.ListAPI{Repo: configBackupRepo}))
+		mux.Handle("POST /api/v1/devices/{id}/config-backups", authHandler.Middleware(configbackup.ListAPI{Repo: configBackupRepo}))
+		mux.Handle("GET /api/v1/devices/{id}/config-backups/diff", authHandler.Middleware(configbackup.DiffAPI{Repo: configBackupRepo}))
+		mux.Handle("GET /api/v1/devices/{id}/config-backups/setup", authHandler.Middleware(configbackup.SetupAPI{Devices: devicesRepo, BaseURL: configBackupBaseURL, Token: configBackupToken}))
+		mux.Handle("GET /api/v1/devices/{id}/config-backups/{backupId}", authHandler.Middleware(configbackup.DetailAPI{Repo: configBackupRepo}))
+		mux.Handle("DELETE /api/v1/devices/{id}/config-backups/{backupId}", authHandler.Middleware(configbackup.DetailAPI{Repo: configBackupRepo}))
+		mux.Handle("POST /api/v1/config-backup/routeros/{serial}", configbackup.PushAPI{Devices: devicesRepo, Repo: configBackupRepo, Token: configBackupToken})
 
 		// Public status pages, ported from Uptime Kuma: a branded,
 		// unauthenticated page listing chosen devices/OLTs and their

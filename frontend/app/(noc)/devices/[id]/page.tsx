@@ -272,8 +272,109 @@ export default function DeviceDetailsPage(){
    <div><div className="text-xs uppercase text-slate-500">Rendered script</div><pre className="mt-1 overflow-x-auto rounded-lg border border-slate-800 bg-slate-950 p-3 text-xs text-slate-300">{preview.renderedScript}</pre></div>
   </div>}
  </section>}
+ <ConfigBackupsSection device={device} />
  <BadgesSection device={device} />
  <section className={card}><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">Interface inventory</h2><p className="mt-1 text-xs text-slate-500">IF-MIB data discovered from the device and persisted in PostgreSQL.</p></div><button onClick={load} className="rounded-lg border border-slate-700 px-3 py-2 text-xs hover:bg-slate-800">Refresh</button></div><div className="mt-5 overflow-x-auto"><table className="w-full min-w-[900px] text-left text-sm"><thead className="border-b border-slate-800 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-3 py-3">Index</th><th>Name</th><th>Description</th><th>Admin</th><th>Oper</th><th>In errors</th><th>Out errors</th><th>Last discovery</th></tr></thead><tbody>{interfaces.length?interfaces.map(x=><tr key={x.id} className="border-b border-slate-800/70"><td className="px-3 py-3 text-slate-500">{x.ifIndex}</td><td className="font-medium">{x.name||"—"}</td><td className="text-slate-400">{x.description||"—"}</td><td><span className={x.adminUp?"text-emerald-400":"text-slate-500"}>{x.adminUp?"UP":"DOWN"}</span></td><td><span className={x.operUp?"text-emerald-400":"text-red-400"}>{x.operUp?"UP":"DOWN"}</span></td><td>{x.inErrors}</td><td>{x.outErrors}</td><td className="text-xs text-slate-500">{x.lastDiscoveredAt?new Date(x.lastDiscoveredAt).toLocaleString():"—"}</td></tr>):<tr><td colSpan={8} className="py-12 text-center text-slate-500">No interface inventory yet. Click <b>Run SNMP Discovery</b> to discover and save interfaces.</td></tr>}</tbody></table></div> </section></main>
+}
+
+/** Feature 1.6 (Config Backup): version history of this device's own
+ *  running-config exports, with manual paste/upload, a line diff between
+ *  any two versions, and (for routers) the RouterOS scheduler script that
+ *  auto-pushes a fresh export on a recurring schedule. Restoring a stored
+ *  version back onto the device is deliberately not offered here -- see
+ *  the package doc comment in backend/internal/configbackup for why. */
+type ConfigBackup = { id: number; deviceId: string; byteSize: number; sha256: string; source: string; takenAt: string; configText?: string };
+function ConfigBackupsSection({ device }: { device: Device }) {
+  const [items, setItems] = useState<ConfigBackup[]>([]);
+  const [loadErr, setLoadErr] = useState("");
+  const [pasteText, setPasteText] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState("");
+  const [fromId, setFromId] = useState<number | "">("");
+  const [toId, setToId] = useState<number | "">("");
+  const [diffLines, setDiffLines] = useState<{ op: string; text: string }[] | null>(null);
+  const [diffErr, setDiffErr] = useState("");
+  const [setup, setSetup] = useState<{ schedulerScript: string } | null>(null);
+  const [setupErr, setSetupErr] = useState("");
+
+  async function load() {
+    try { setItems(await apiFetch<ConfigBackup[]>(`/devices/${device.id}/config-backups`)); setLoadErr(""); }
+    catch (e) { setLoadErr(e instanceof ApiError ? e.message : "Unable to load config backups."); }
+  }
+  useEffect(() => { load(); }, [device.id]);
+
+  async function savePaste() {
+    if (!pasteText.trim()) return;
+    setSaving(true); setSaveMsg("");
+    try {
+      await apiFetch(`/devices/${device.id}/config-backups`, { method: "POST", body: JSON.stringify({ configText: pasteText }) });
+      setPasteText(""); setSaveMsg("Saved a new config backup version."); await load();
+    } catch (e) { setSaveMsg(e instanceof ApiError ? e.message : "Failed to save config backup."); }
+    finally { setSaving(false); }
+  }
+
+  async function runDiff() {
+    if (fromId === "" || toId === "") return;
+    setDiffErr(""); setDiffLines(null);
+    try {
+      const r = await apiFetch<{ lines: { op: string; text: string }[] }>(`/devices/${device.id}/config-backups/diff?from=${fromId}&to=${toId}`);
+      setDiffLines(r.lines);
+    } catch (e) { setDiffErr(e instanceof ApiError ? e.message : "Failed to compute diff."); }
+  }
+
+  async function loadSetup() {
+    setSetupErr(""); setSetup(null);
+    try { setSetup(await apiFetch<{ schedulerScript: string }>(`/devices/${device.id}/config-backups/setup`)); }
+    catch (e) { setSetupErr(e instanceof ApiError ? e.message : "Failed to render scheduler script (does this device have a serial number?)."); }
+  }
+
+  return (
+    <section className={`mb-6 ${card}`}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div><h2 className="font-semibold">Config Backup</h2><p className="mt-1 text-xs text-slate-500">Version history of this device&apos;s own running config. Paste/upload a version manually, or (RouterOS) schedule it to push automatically. Restoring a version back onto the device isn&apos;t supported here yet.</p></div>
+        {device.deviceType === "router" && <button onClick={loadSetup} className="rounded-lg border border-cyan-800 bg-cyan-950/40 px-3 py-2 text-xs text-cyan-300 hover:bg-cyan-900/40">Show auto-backup scheduler script</button>}
+      </div>
+      {setupErr && <div className="mt-3 text-xs text-red-400">{setupErr}</div>}
+      {setup && <pre className="mt-3 overflow-x-auto rounded-lg border border-slate-800 bg-slate-950 p-3 text-xs text-emerald-300">{setup.schedulerScript}</pre>}
+
+      <div className="mt-4 grid gap-3">
+        <textarea value={pasteText} onChange={e => setPasteText(e.target.value)} rows={4} placeholder="Paste a config export (e.g. RouterOS /export output) to save it as a new version…" className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs outline-none focus:border-cyan-500" />
+        <div><button onClick={savePaste} disabled={saving || !pasteText.trim()} className="rounded-lg bg-cyan-600 px-4 py-2 text-xs font-semibold hover:bg-cyan-500 disabled:opacity-50">{saving ? "Saving…" : "Save as new version"}</button>{saveMsg && <span className="ml-3 text-xs text-slate-400">{saveMsg}</span>}</div>
+      </div>
+
+      {loadErr && <div className="mt-3 text-xs text-red-400">{loadErr}</div>}
+      {items.length === 0 ? (
+        <div className="mt-4 text-sm text-slate-500">No config backups yet.</div>
+      ) : (
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead><tr className="text-xs uppercase text-slate-500"><th className="pb-2 pr-4">Taken</th><th className="pb-2 pr-4">Source</th><th className="pb-2 pr-4">Size</th><th className="pb-2">Diff</th></tr></thead>
+            <tbody>
+              {items.map(b => (
+                <tr key={b.id} className="border-t border-slate-800">
+                  <td className="py-1.5 pr-4">{new Date(b.takenAt).toLocaleString()}</td>
+                  <td className="py-1.5 pr-4 text-slate-400">{b.source}</td>
+                  <td className="py-1.5 pr-4 text-slate-500">{b.byteSize} B</td>
+                  <td className="py-1.5"><label className="mr-3 text-xs"><input type="radio" name="cb-from" className="mr-1" checked={fromId === b.id} onChange={() => setFromId(b.id)} />from</label><label className="text-xs"><input type="radio" name="cb-to" className="mr-1" checked={toId === b.id} onChange={() => setToId(b.id)} />to</label></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <button onClick={runDiff} disabled={fromId === "" || toId === ""} className="mt-3 rounded-lg border border-slate-700 px-3 py-2 text-xs hover:bg-slate-800 disabled:opacity-50">Compare selected versions</button>
+        </div>
+      )}
+      {diffErr && <div className="mt-3 text-xs text-red-400">{diffErr}</div>}
+      {diffLines && (
+        <pre className="mt-3 max-h-96 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-3 text-xs">
+          {diffLines.map((l, i) => (
+            <div key={i} className={l.op === "add" ? "text-emerald-400" : l.op === "remove" ? "text-red-400" : "text-slate-500"}>
+              {l.op === "add" ? "+ " : l.op === "remove" ? "- " : "  "}{l.text}
+            </div>
+          ))}
+        </pre>
+      )}
+    </section>
+  );
 }
 
 /** Embeddable SVG status-badge URLs for this device (ported from Uptime
