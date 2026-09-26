@@ -26,6 +26,7 @@ import {
   FolderTree,
   Gauge,
   Search,
+  ScanSearch,
   ChevronDown,
   LogOut,
   ShieldCheck,
@@ -62,6 +63,7 @@ const NAV_GROUPS: NavGroup[] = [
       { name: "Sites", href: "/sites", icon: MapPin },
       { name: "Customers", href: "/customers", icon: Users },
       { name: "Provisioning", href: "/provisioning", icon: Wrench },
+      { name: "Auto-Discovery", href: "/auto-discovery", icon: ScanSearch },
     ],
   },
   {

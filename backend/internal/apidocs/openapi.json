@@ -1647,6 +1647,78 @@
         ]
       }
     },
+    "/api/v1/discovery/candidates": {
+      "get": {
+        "summary": "GET /api/v1/discovery/candidates",
+        "tags": [
+          "discovery"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
+    "/api/v1/discovery/candidates/{id}/ignore": {
+      "post": {
+        "summary": "POST /api/v1/discovery/candidates/{id}/ignore",
+        "tags": [
+          "discovery"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
+    "/api/v1/discovery/candidates/{id}/import": {
+      "post": {
+        "summary": "POST /api/v1/discovery/candidates/{id}/import",
+        "tags": [
+          "discovery"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
     "/api/v1/discovery/import": {
       "post": {
         "summary": "POST /api/v1/discovery/import",
@@ -1698,6 +1770,98 @@
     "/api/v1/discovery/scan/{id}": {
       "get": {
         "summary": "GET /api/v1/discovery/scan/{id}",
+        "tags": [
+          "discovery"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
+    "/api/v1/discovery/targets": {
+      "get": {
+        "summary": "GET /api/v1/discovery/targets",
+        "tags": [
+          "discovery"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      },
+      "post": {
+        "summary": "POST /api/v1/discovery/targets",
+        "tags": [
+          "discovery"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
+    "/api/v1/discovery/targets/{id}": {
+      "delete": {
+        "summary": "DELETE /api/v1/discovery/targets/{id}",
+        "tags": [
+          "discovery"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      },
+      "put": {
+        "summary": "PUT /api/v1/discovery/targets/{id}",
         "tags": [
           "discovery"
         ],

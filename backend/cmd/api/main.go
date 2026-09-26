@@ -522,6 +522,23 @@ func main() {
 		mux.Handle("GET /api/v1/discovery/scan/{id}", authHandler.Middleware(discovery.JobAPI{Manager: discoveryManager}))
 		mux.Handle("POST /api/v1/discovery/import", authHandler.Middleware(discovery.ImportAPI{Manager: discoveryManager, Devices: devicesRepo}))
 
+		// Feature 1.2 (Device Auto-Discovery), Phase 1 of the build
+		// blueprint: the "auto" half on top of the manual scan above --
+		// saved subnets (discovery_targets) rescanned on their own schedule
+		// by a background poller (AutoScanner, built on the Feature 1.1
+		// pollpool primitive), surfacing newly-seen hosts as durable
+		// discovery_candidates rows for later review/import.
+		discoveryTargets := discovery.TargetRepository{DB: db}
+		mux.Handle("GET /api/v1/discovery/targets", authHandler.Middleware(discovery.TargetsAPI{Repo: discoveryTargets}))
+		mux.Handle("POST /api/v1/discovery/targets", authHandler.Middleware(discovery.TargetsAPI{Repo: discoveryTargets}))
+		mux.Handle("PUT /api/v1/discovery/targets/{id}", authHandler.Middleware(discovery.TargetAPI{Repo: discoveryTargets}))
+		mux.Handle("DELETE /api/v1/discovery/targets/{id}", authHandler.Middleware(discovery.TargetAPI{Repo: discoveryTargets}))
+		mux.Handle("GET /api/v1/discovery/candidates", authHandler.Middleware(discovery.CandidatesAPI{Repo: discoveryTargets}))
+		mux.Handle("POST /api/v1/discovery/candidates/{id}/import", authHandler.Middleware(discovery.CandidateActionAPI{Repo: discoveryTargets, Devices: devicesRepo, Action: "import"}))
+		mux.Handle("POST /api/v1/discovery/candidates/{id}/ignore", authHandler.Middleware(discovery.CandidateActionAPI{Repo: discoveryTargets, Devices: devicesRepo, Action: "ignore"}))
+		autoScanner := &discovery.AutoScanner{Targets: discoveryTargets, Devices: devicesRepo}
+		go autoScanner.Run(ctx)
+
 		// Unified active-alerts feed (open OLT alerts + unreachable devices
 		// + recent critical/warning SNMP traps), polled by the browser
 		// voice-alert feature so it doesn't have to stitch three APIs
@@ -742,6 +759,13 @@ func main() {
 		mux.HandleFunc("POST /api/v1/discovery/scan", unavailable)
 		mux.HandleFunc("GET /api/v1/discovery/scan/{id}", unavailable)
 		mux.HandleFunc("POST /api/v1/discovery/import", unavailable)
+		mux.HandleFunc("GET /api/v1/discovery/targets", unavailable)
+		mux.HandleFunc("POST /api/v1/discovery/targets", unavailable)
+		mux.HandleFunc("PUT /api/v1/discovery/targets/{id}", unavailable)
+		mux.HandleFunc("DELETE /api/v1/discovery/targets/{id}", unavailable)
+		mux.HandleFunc("GET /api/v1/discovery/candidates", unavailable)
+		mux.HandleFunc("POST /api/v1/discovery/candidates/{id}/import", unavailable)
+		mux.HandleFunc("POST /api/v1/discovery/candidates/{id}/ignore", unavailable)
 		mux.HandleFunc("GET /api/v1/alerts/active", unavailable)
 		mux.HandleFunc("GET /api/v1/provisioning/templates", unavailable)
 		mux.HandleFunc("POST /api/v1/provisioning/templates", unavailable)

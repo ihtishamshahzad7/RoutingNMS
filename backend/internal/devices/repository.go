@@ -552,6 +552,19 @@ func (r Repository) ExistsByName(ctx context.Context, organizationID, name strin
 	return exists, err
 }
 
+// ExistsByAddress reports whether any device (in any organization) is
+// already monitoring this address -- used by scheduled subnet
+// auto-discovery (internal/discovery) to avoid re-suggesting a host that's
+// already a monitored device as a "new" candidate.
+func (r Repository) ExistsByAddress(ctx context.Context, address string) (bool, error) {
+	if r.DB == nil {
+		return false, fmt.Errorf("device repository is not initialized")
+	}
+	var exists bool
+	err := r.DB.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM devices WHERE address=$1)`, address).Scan(&exists)
+	return exists, err
+}
+
 // DeleteAllForOrg removes every device belonging to an organization, along
 // with any tag/device-group assignments referencing them (those tables key
 // a device by its id as plain text, with no foreign key, so they are not
