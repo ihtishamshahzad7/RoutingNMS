@@ -15,6 +15,7 @@ import (
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/accesspoints"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/alerts"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/alertsfeed"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/apidocs"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/apikeys"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/auth"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/backup"
@@ -254,6 +255,12 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(healthResponse{"ok", "routingnms-api", "0.1.0"})
 	})
+	// Feature 0.4 (API-First Discipline): serve the OpenAPI spec generated
+	// from this route table (backend/scripts/gen_openapi.py) and a Swagger
+	// UI page to browse it. Public like health/ready -- it's documentation,
+	// not data.
+	mux.HandleFunc("GET /api/v1/openapi.json", apidocs.SpecHandler)
+	mux.HandleFunc("GET /api/v1/docs", apidocs.UIHandler)
 	mux.HandleFunc("GET /api/v1/ready", func(w http.ResponseWriter, r *http.Request) {
 		status, code := "ready", http.StatusOK
 		if db != nil {
