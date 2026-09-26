@@ -29,6 +29,7 @@ import {
   ChevronDown,
   LogOut,
   ShieldCheck,
+  Palette,
 } from "lucide-react";
 
 type NavItem = { name: string; href: string; icon: React.ComponentType<{ size?: number; strokeWidth?: number }> };
@@ -92,6 +93,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Account",
     items: [
       { name: "Settings", href: "/settings", icon: ShieldCheck },
+      { name: "Style Guide", href: "/style-guide", icon: Palette },
     ],
   },
 ];
