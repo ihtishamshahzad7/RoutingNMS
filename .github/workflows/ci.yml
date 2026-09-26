@@ -1,0 +1,148 @@
+# Phase 0.3 (RoutingNMS build blueprint): CI pipeline.
+#
+# Scope decision, stated plainly rather than silently narrowed: the
+# blueprint's CI/CD feature describes GitHub Actions with Postgres/Redis/
+# NATS service containers. This workflow only spins up Postgres --
+# grepping this codebase (see claude/roadmap.md Feature 0.3's writeup)
+# found no actual Redis or NATS client usage anywhere in the Go source,
+# despite both appearing in deployments/docker-compose.yml. Wiring up
+# service containers for infrastructure the app doesn't use yet would be
+# make-believe coverage, not real CI, so this workflow only stands up
+# what the app actually talks to today (Postgres). If a later feature
+# (e.g. 1.1's poller worker pool, which AGENTS.md says may use the
+# already-present-but-idle NATS) starts a real client connection, add its
+# service container here at that point, not before.
+#
+# This is CI, not CD: it lints/builds/tests every push and pull request,
+# but does not deploy anywhere. The production box (192.168.88.19) is on
+# a private LAN with no inbound path from GitHub's runners, and the
+# existing deployments/ubuntu-24.04/update.sh already is the real,
+# battle-tested deploy+verify script the user runs by hand after every
+# push. Wiring actual auto-deploy would need a self-hosted runner or a
+# webhook receiver on that box -- real new infrastructure this project
+# doesn't have yet, so it's flagged as the explicit next increment (0.3b)
+# rather than bolted on here.
+#
+# The frontend job also skips `next lint`: this repo has never had an
+# ESLint config, so `next lint` prompts interactively to create one and
+# would just hang in CI's non-interactive shell (confirmed by actually
+# running it before writing this workflow). Adding a real config and
+# fixing what it flags is its own scoped piece of work, not silently
+# bundled into standing up the pipeline -- also 0.3b.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    name: Backend (Go)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: routingnms_ci
+          POSTGRES_USER: routingnms
+          POSTGRES_PASSWORD: routingnms
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U routingnms -d routingnms_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://routingnms:routingnms@localhost:5432/routingnms_ci?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: gofmt check
+        working-directory: backend
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not gofmt-formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Sync Go dependencies
+        # Mirrors deployments/ubuntu-24.04/update.sh's own dependency step.
+        # go.sum isn't committed to this repo yet (the development sandbox
+        # this project is mostly built in has no proxy.golang.org access,
+        # so it has never been able to generate one) -- `go mod tidy`
+        # regenerates it here, where GitHub's runners have real internet
+        # access, rather than requiring a checked-in file this repo has
+        # never actually had.
+        working-directory: backend
+        run: |
+          go mod tidy
+          go mod download
+          go mod verify
+
+      - name: go vet
+        working-directory: backend
+        run: go vet ./...
+
+      - name: go build
+        working-directory: backend
+        run: go build ./...
+
+      - name: go test
+        working-directory: backend
+        run: go test ./...
+
+      - name: Apply migrations against a real Postgres
+        working-directory: backend
+        run: |
+          # Mirrors deployments/ubuntu-24.04/update.sh's own migration
+          # loop (sorted -V, ON_ERROR_STOP), so CI catches the same class
+          # of migration-ordering/syntax mistake the production update
+          # script would -- run here on every push instead of only being
+          # discovered on a live deploy.
+          sudo apt-get update -y >/dev/null
+          sudo apt-get install -y postgresql-client >/dev/null
+          for migration in $(printf '%s\n' migrations/*.sql | sort -V); do
+            echo "Applying $migration"
+            PGPASSWORD=routingnms psql -h localhost -U routingnms -d routingnms_ci -v ON_ERROR_STOP=1 -f "$migration"
+          done
+
+  frontend:
+    name: Frontend (Next.js)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: npm ci
+        working-directory: frontend
+        run: npm ci --include=dev --no-audit --no-fund
+
+      - name: TypeScript check
+        working-directory: frontend
+        run: npx tsc --noEmit
+
+      # No lint step yet: this repo has never had an ESLint config (`npm
+      # run lint` / `next lint` prompts interactively to create one, which
+      # would just hang in CI's non-interactive shell -- confirmed by
+      # actually running it in this sandbox). Adding a real config and
+      # fixing whatever it flags across the existing frontend is its own
+      # feature, not bundled into standing up the pipeline itself -- see
+      # the 0.3b follow-up note in claude/roadmap.md.
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build
