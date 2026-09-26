@@ -36,6 +36,13 @@ design system — left as-is since it works and rewriting it risks breaking
 a live flow, but `components/ui/modal.tsx` is now here so nothing else
 repeats that pattern.
 
+## Screen-level UX spec
+
+For how a whole *screen* (not just a component) should be put together —
+layout wrapper conventions, required loading/empty/error states, and an
+audit of the core NOC screens against that contract — see `UX_SPEC.md`
+(Feature 0.6).
+
 ## Known gaps (flagged, not addressed here — 0.5b)
 
 - No lint rule catches a new component hardcoding a hex color instead of a
