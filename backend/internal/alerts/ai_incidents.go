@@ -17,15 +17,15 @@ import (
 // internal/incidents remains the live in-memory store backing /api/incidents
 // and the SSE stream.
 type AiIncident struct {
-	ID            int64     `json:"id"`
-	IncidentRef   string    `json:"incidentRef"`
-	Status        string    `json:"status"`
-	Severity      string    `json:"severity"`
-	Title         string    `json:"title"`
-	Source        string    `json:"source"`
-	ResourceID    string    `json:"resourceId"`
-	DeviceID      *int64    `json:"deviceId,omitempty"`
-	TriggeredAt   time.Time `json:"triggeredAt"`
+	ID          int64     `json:"id"`
+	IncidentRef string    `json:"incidentRef"`
+	Status      string    `json:"status"`
+	Severity    string    `json:"severity"`
+	Title       string    `json:"title"`
+	Source      string    `json:"source"`
+	ResourceID  string    `json:"resourceId"`
+	DeviceID    *int64    `json:"deviceId,omitempty"`
+	TriggeredAt time.Time `json:"triggeredAt"`
 
 	RootCause          string           `json:"rootCause,omitempty"`
 	ConfidencePct      *int             `json:"confidencePct,omitempty"`
@@ -168,6 +168,23 @@ func (r Repository) SetAiIncidentStatus(ctx context.Context, id int64, status st
 	return err
 }
 
+// CloseAiIncidentByRef marks every still-open durable incident carrying the
+// given incident_ref (the same "source:resource:code" id the live
+// incidents.Engine keys on -- see Correlator.Process) as resolved. Used by
+// Evaluator.resolve (Feature 1.4) to close out the incident record a fired
+// alert opened once its underlying metric recovers, rather than leaving it
+// "open" forever with only a resolved notification sent. A no-op (0 rows
+// affected, no error) when nothing matching is open, which is the common
+// case for an alert that resolved before this fix existed.
+func (r Repository) CloseAiIncidentByRef(ctx context.Context, incidentRef string) error {
+	if r.DB == nil {
+		return fmt.Errorf("alerts repository is not initialized")
+	}
+	_, err := r.DB.Exec(ctx, `UPDATE ai_incidents SET status='resolved', updated_at=NOW()
+		WHERE incident_ref=$1 AND status <> 'resolved'`, incidentRef)
+	return err
+}
+
 type aiIncidentScanner interface {
 	Scan(dest ...any) error
 }
@@ -265,4 +282,34 @@ func (b IncidentBridge) Open(ctx context.Context, a Alert) (AiIncident, error) {
 
 func incidentTitle(a Alert) string {
 	return "Alert " + a.RuleKey + " breached on " + a.DeviceID
+}
+
+// incidentRef reconstructs the same deterministic id Correlator.Process
+// derives when Open first creates the incident ("source:resource:code",
+// here always "alert-rule:<deviceID>:<ruleKey>" since Open never sets
+// ParentResourceID) -- letting Close resolve the right live+durable
+// incident from just a rule key and device id, with no extra state to
+// track across the breach's lifetime.
+func incidentRef(ruleKey, deviceID string) string {
+	return "alert-rule:" + deviceID + ":" + ruleKey
+}
+
+// Close resolves the live in-memory incident (publishing the transition to
+// the SSE stream so the Incident Hub updates immediately) and marks the
+// matching durable ai_incidents row(s) resolved. Called by Evaluator.resolve
+// when a previously-breaching rule's condition clears -- the counterpart to
+// Open, so a recovered alert's incident record doesn't stay "open" forever
+// with only a notification to show for the recovery.
+func (b IncidentBridge) Close(ctx context.Context, ruleKey, deviceID string) error {
+	ref := incidentRef(ruleKey, deviceID)
+	if b.Live != nil {
+		if inc, err := b.Live.Resolve(ref); err == nil && b.Stream != nil {
+			b.Stream.Publish(inc)
+		}
+		// A resolve error (e.g. "incident not found", already resolved by an
+		// earlier tick, or the live engine was restarted since Open) is not
+		// fatal -- the durable-row update below is still attempted and is
+		// what actually matters for the Incident Hub's history.
+	}
+	return b.Repo.CloseAiIncidentByRef(ctx, ref)
 }

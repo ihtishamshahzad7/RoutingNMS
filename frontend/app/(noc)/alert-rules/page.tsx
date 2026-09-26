@@ -16,6 +16,13 @@ type Channel = { id: number; name: string; tenantId?: string; channelType: strin
 type Preset = { id: string; name: string; description: string; ruleType: string; metric: string; operator: string; threshold: number; unit?: string; severity: string };
 
 const TYPES = ["threshold", "icmp_loss", "icmp_rtt", "absence", "traps"];
+// Feature 1.4 (Static Threshold Alerting): the backend evaluator's toRule()
+// only converts threshold/icmp_loss/icmp_rtt rows into something it actually
+// evaluates -- "absence" and "traps" are accepted by the schema/API and
+// selectable here, but silently never fire. Labeling them rather than
+// hiding them (a rule already saved as one of these types must stay
+// visible/editable) so a user isn't misled into thinking they're armed.
+const NOT_YET_EVALUATED = new Set(["absence", "traps"]);
 const SEVS = ["critical", "warning", "info"];
 // Same single-tenant placeholder convention used across the rest of this
 // frontend (tags, device-groups, backup/restore, status pages, ...) --
@@ -231,7 +238,11 @@ function RuleForm({ channels, presets, onSaved }: { channels: Channel[]; presets
       <div className="flex flex-wrap gap-3">
         <input className="input" placeholder="Rule name" value={name} onChange={e => setName(e.target.value)} />
         <input className="input min-w-[220px] flex-1" placeholder="Description (optional)" value={description} onChange={e => setDescription(e.target.value)} />
-        <select className="input" value={ruleType} disabled={locked} onChange={e => setRuleType(e.target.value)}>{TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select>
+        <select className="input" value={ruleType} disabled={locked} onChange={e => setRuleType(e.target.value)}>
+          {TYPES.map(t => (
+            <option key={t} value={t}>{t}{NOT_YET_EVALUATED.has(t) ? " (not yet evaluated)" : ""}</option>
+          ))}
+        </select>
         {(ruleType === "threshold" || ruleType === "icmp_loss" || ruleType === "icmp_rtt") && <>
           <input className="input font-mono" placeholder="metric" value={metric} disabled={locked} onChange={e => setMetric(e.target.value)} />
           <select className="input" value={operator} disabled={locked} onChange={e => setOperator(e.target.value)}>{["=", ">", ">=", "<", "<="].map(o => <option key={o} value={o}>{o}</option>)}</select>

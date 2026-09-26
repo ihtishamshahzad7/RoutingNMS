@@ -229,14 +229,17 @@ func (e *Evaluator) fire(ctx context.Context, alert Alert, pr PersistedRule) {
 }
 
 // resolve notifies the rule's channels that a previously-breaching condition
-// has returned to normal. This is the recovery counterpart to fire: same
-// channel fanout, same rule/device identity, but severity "resolved" so
-// providers with a dedicated recovery path (Teams, ntfy, Opsgenie's
-// close-alert call, Mattermost's up/down coloring, ...) render it as an
-// all-clear rather than a new breach. Deliberately does not open/close a
-// durable ai_incidents row -- that is a separate concern from channel
-// notification and out of scope here.
+// has returned to normal (same channel fanout, same rule/device identity,
+// but severity "resolved" so providers with a dedicated recovery path --
+// Teams, ntfy, Opsgenie's close-alert call, Mattermost's up/down coloring --
+// render it as an all-clear rather than a new breach), and closes out the
+// durable incident fire() opened (Feature 1.4: previously the incident
+// record stayed "open" forever even after the metric recovered, with only
+// the notification showing the recovery).
 func (e *Evaluator) resolve(ctx context.Context, alert Alert, pr PersistedRule) {
+	if err := e.Bridge.Close(ctx, alert.RuleKey, alert.DeviceID); err != nil {
+		log.Printf("alerts evaluator: close incident for rule %s device %s: %v", alert.RuleKey, alert.DeviceID, err)
+	}
 	// title must match fire()'s title exactly: sendOpsgenie uses title as the
 	// alias to both create and close an Opsgenie alert, so a resolved
 	// notification with a different title would close the wrong (nonexistent)
