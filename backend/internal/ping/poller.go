@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/metricsdb"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/pollpool"
 )
 
 // Result is the parsed outcome of a single ICMP probe.
@@ -224,7 +225,12 @@ func (p *Poller) pollOnce(ctx context.Context) {
 		return
 	}
 	now := time.Now().UTC()
-	for _, d := range devices {
+	// Feature 1.1 (Poller Worker Pool): probe devices concurrently instead
+	// of one at a time, so a handful of slow/unreachable devices no longer
+	// stretch out the whole cycle for every device behind them in the
+	// list. Each device's own body already only touches shared state
+	// (p.live/p.consecFails/p.pending) under p.mu, so this is safe as-is.
+	pollpool.Run(ctx, devices, pollpool.DefaultWorkers, func(ctx context.Context, d IcmpEnabledDevice) {
 		probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		res := p.probe(probeCtx, d)
 		cancel()
@@ -269,7 +275,7 @@ func (p *Poller) pollOnce(ctx context.Context) {
 			{SubjectType: "device", SubjectID: d.ID, TenantID: d.OrganizationID, MetricName: "icmp_rtt_ms", Value: res.RTTMs, RecordedAt: now},
 			{SubjectType: "device", SubjectID: d.ID, TenantID: d.OrganizationID, MetricName: "icmp_reachable", Value: up, RecordedAt: now},
 		})
-	}
+	})
 }
 
 // Live returns the most recent probe result for a device id.
