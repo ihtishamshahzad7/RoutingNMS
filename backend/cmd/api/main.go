@@ -58,6 +58,16 @@ type healthResponse struct {
 	Version string `json:"version"`
 }
 
+// pingLiveAdapter satisfies topology.LiveStatus from the package-level ICMP
+// poller singleton, so the topology graph can reflect a device's real
+// last-known reachability without the topology package importing ping.
+type pingLiveAdapter struct{ poller *ping.Poller }
+
+func (a pingLiveAdapter) Live(deviceID string) (reachable bool, ok bool) {
+	res, ok := a.poller.Live(deviceID)
+	return res.Reachable, ok
+}
+
 func main() {
 	port := os.Getenv("APP_PORT")
 	if port == "" {
@@ -357,6 +367,9 @@ func main() {
 		// links now sourced from the topology_links table, which the
 		// scheduled LLDP discovery loop (started above) keeps up to date.
 		topologyRepo := topology.Repository{DB: db}
+		if pingPoller != nil {
+			topologyRepo.Live = pingLiveAdapter{pingPoller}
+		}
 		mux.Handle("GET /api/topology", authHandler.Middleware(topology.GraphHandler{Repo: topologyRepo}))
 
 		// Sprint 1 topology administration: manual rediscovery, last-cycle

@@ -7,10 +7,29 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// LiveStatus is the minimal read accessor the graph builder needs to reflect
+// a device's real, currently-known reachability in Node.Health. It's
+// satisfied by a small adapter around the ICMP poller singleton wired up in
+// main.go (the same singleton badges.Handler.PingPoller already reuses for
+// its own "real state, don't invent it" status checks) — kept as an
+// interface here so this package doesn't need to import internal/ping.
+type LiveStatus interface {
+	// Live reports whether deviceID's most recent probe was reachable, and
+	// whether any probe result is known at all for it (ok=false for a
+	// device this accessor has never probed, e.g. ICMP disabled) — callers
+	// must treat ok=false as "unknown," not as down.
+	Live(deviceID string) (reachable bool, ok bool)
+}
+
 // loadInventoryNodes returns the real registered inventory as graph nodes:
 // devices (routers/switches/servers, from the devices table) and OLTs (from
-// the olts table), each given full health so a page load shows them up.
-func loadInventoryNodes(ctx context.Context, db *pgxpool.Pool) []Node {
+// the olts table). Health defaults to 100 (rendered "up") for every node;
+// when live is non-nil and has a known reading for a device, that reading
+// overrides the default instead of leaving every node's status invented.
+// OLTs aren't probed by the ICMP poller, so they always keep the default —
+// same scope boundary as feature 31's badge pending-state closure, which
+// only ever covered ICMP-monitored devices.
+func loadInventoryNodes(ctx context.Context, db *pgxpool.Pool, live LiveStatus) []Node {
 	if db == nil {
 		return nil
 	}
@@ -19,7 +38,13 @@ func loadInventoryNodes(ctx context.Context, db *pgxpool.Pool) []Node {
 		for rows.Next() {
 			var id, name, deviceType, address string
 			if rows.Scan(&id, &name, &deviceType, &address) == nil {
-				nodes = append(nodes, Node{ID: id, Name: name, Type: nodeType(deviceType), Address: address, Health: 100})
+				health := 100
+				if live != nil {
+					if reachable, ok := live.Live(id); ok && !reachable {
+						health = 0
+					}
+				}
+				nodes = append(nodes, Node{ID: id, Name: name, Type: nodeType(deviceType), Address: address, Health: health})
 			}
 		}
 		rows.Close()
@@ -42,7 +67,7 @@ func loadInventoryNodes(ctx context.Context, db *pgxpool.Pool) []Node {
 // been wired up, links are intentionally left empty rather than invented.
 func LiveGraph(db *pgxpool.Pool) func() Graph {
 	return func() Graph {
-		return Builder{}.Build(loadInventoryNodes(context.Background(), db), nil)
+		return Builder{}.Build(loadInventoryNodes(context.Background(), db, nil), nil)
 	}
 }
 
@@ -50,7 +75,7 @@ func LiveGraph(db *pgxpool.Pool) func() Graph {
 // links from the topology_links table (endpoint ids are the devices.id as a
 // decimal string, matching how loadInventoryNodes renders Node.ID).
 func (r Repository) Graph(ctx context.Context) (Graph, error) {
-	nodes := loadInventoryNodes(ctx, r.DB)
+	nodes := loadInventoryNodes(ctx, r.DB, r.Live)
 	links, err := r.ListActiveLinks(ctx)
 	if err != nil {
 		return Graph{}, err

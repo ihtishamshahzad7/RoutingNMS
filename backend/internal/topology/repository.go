@@ -16,6 +16,12 @@ import (
 // 0014. It is the data layer behind Sprint 1's scheduled LLDP discovery loop.
 type Repository struct {
 	DB *pgxpool.Pool
+	// Live, if set, lets Graph() reflect each device's real last-known ICMP
+	// reachability in Node.Health instead of the always-up default. Optional:
+	// nil (the zero value) preserves the pre-existing always-100 behavior,
+	// so a caller that never sets it (e.g. an older construction site, or a
+	// test) sees no change.
+	Live LiveStatus
 }
 
 // PersistedLink is a `topology_links` row joined with device names so the API

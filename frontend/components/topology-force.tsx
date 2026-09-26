@@ -6,6 +6,7 @@
 // drag support; the parent page passes raw graph data and this component owns
 // the layout + local selection state.
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import {
   drag,
   forceCenter,
@@ -14,6 +15,7 @@ import {
   forceManyBody,
   forceSimulation,
   select,
+  zoom,
   type SimulationNodeDatum,
 } from "d3";
 
@@ -55,6 +57,16 @@ export function TopologyForce({ nodes, links }: { nodes: TopoNode[]; links: Topo
     svg.selectAll("*").remove();
     if (simNodes.length === 0) return;
 
+    // Zoom/pan: a wrapping <g> is what actually gets transformed, so the svg
+    // element itself keeps its fixed viewBox and only this container's
+    // content pans/scales. Wheel-zoom + click-drag-to-pan, 0.3x-4x range.
+    const zoomLayer = svg.append("g");
+    svg.call(
+      zoom<SVGSVGElement, unknown>()
+        .scaleExtent([0.3, 4])
+        .on("zoom", (ev) => zoomLayer.attr("transform", ev.transform))
+    ).on("dblclick.zoom", null);
+
     const sim = forceSimulation(simNodes)
       .force("link", forceLink<SimNode, SimLink>(simLinks).id((d) => d.id).distance(95).strength(0.6))
       .force("charge", forceManyBody().strength(-300))
@@ -62,7 +74,7 @@ export function TopologyForce({ nodes, links }: { nodes: TopoNode[]; links: Topo
       .force("collide", forceCollide<SimNode>(28));
 
     // Edges
-    svg.append("g")
+    const linkLayer = zoomLayer.append("g")
       .selectAll("line")
       .data(simLinks)
       .join("line")
@@ -72,7 +84,7 @@ export function TopologyForce({ nodes, links }: { nodes: TopoNode[]; links: Topo
       .attr("opacity", 0.55);
 
     // Edge labels (latency)
-    svg.append("g")
+    const latencyLayer = zoomLayer.append("g")
       .selectAll("text")
       .data(simLinks)
       .join("text")
@@ -82,7 +94,7 @@ export function TopologyForce({ nodes, links }: { nodes: TopoNode[]; links: Topo
       .text((d) => (d.latencyMs ?? 0) > 0 ? `${d.latencyMs}ms` : "");
 
     // Nodes
-    const g = svg.append("g")
+    const g = zoomLayer.append("g")
       .selectAll<SVGGElement, SimNode>("g")
       .data(simNodes)
       .join("g")
@@ -126,13 +138,11 @@ export function TopologyForce({ nodes, links }: { nodes: TopoNode[]; links: Topo
     );
 
     // Tick: move lines, latency labels, node groups
-    const linkEls = svg.select<SVGGElement>("g:nth-of-type(1)").selectAll<SVGLineElement, SimLink>("line");
-    const latencyEls = svg.select<SVGGElement>("g:nth-of-type(2)").selectAll<SVGTextElement, SimLink>("text");
     sim.on("tick", () => {
-      linkEls
+      linkLayer
         .attr("x1", (d) => (d.source as SimNode).x ?? 0).attr("y1", (d) => (d.source as SimNode).y ?? 0)
         .attr("x2", (d) => (d.target as SimNode).x ?? 0).attr("y2", (d) => (d.target as SimNode).y ?? 0);
-      latencyEls
+      latencyLayer
         .attr("x", (d) => (((d.source as SimNode).x ?? 0) + ((d.target as SimNode).x ?? 0)) / 2)
         .attr("y", (d) => (((d.source as SimNode).y ?? 0) + ((d.target as SimNode).y ?? 0)) / 2 - 10);
       g.attr("transform", (d) => `translate(${(d.x ?? 0)},${(d.y ?? 0)})`);
@@ -141,19 +151,30 @@ export function TopologyForce({ nodes, links }: { nodes: TopoNode[]; links: Topo
     return () => { sim.stop(); };
   }, [nodes, links]);
 
+  const detailHref = selected ? (selected.type === "olt" ? `/olts/${selected.id}` : `/devices/${selected.id}`) : "";
   const detail = selected ? (
-    <div className="pointer-events-none absolute bottom-4 left-4 rounded-[5px] border border-[#30363D] bg-[#1C2128] px-3 py-2 shadow-xl">
+    <div className="absolute bottom-4 left-4 rounded-[5px] border border-[#30363D] bg-[#1C2128] px-3 py-2 shadow-xl">
       <div className="text-[11px] font-semibold text-[#E6EDF3]">{selected.name}</div>
       <div className="mt-0.5 text-[10px] text-[#8B949E]">
         {selected.type}{selected.address ? ` · ${selected.address}` : ""} · health {selected.health}%
       </div>
+      <Link href={detailHref} className="mt-1.5 inline-block text-[10px] font-medium text-[#58A6FF] hover:underline">
+        View details →
+      </Link>
     </div>
   ) : null;
 
   return (
     <div className="relative overflow-hidden rounded-[8px] border border-[#21262D] bg-[#0D1117]">
-      <svg ref={svgRef} width="100%" height={H} viewBox={`0 0 ${W} ${H}`} className="block" role="img" aria-label="Network topology graph" />
+      <svg ref={svgRef} width="100%" height={H} viewBox={`0 0 ${W} ${H}`} className="block cursor-grab active:cursor-grabbing" role="img" aria-label="Network topology graph" />
       {detail}
+      <div className="pointer-events-none absolute right-3 top-3 flex flex-col gap-1 rounded-[5px] border border-[#21262D] bg-[#161B22]/90 px-2.5 py-2 text-[9.5px] text-[#8B949E]">
+        <div className="font-semibold text-[#C9D1D9]">Legend</div>
+        <div className="flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-full" style={{ background: "#3FB950" }} /> Up (health ≥ 90)</div>
+        <div className="flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-full" style={{ background: "#D29922" }} /> Degraded (70–89)</div>
+        <div className="flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-full" style={{ background: "#F78166" }} /> Down (&lt; 70)</div>
+        <div className="mt-0.5 text-[#484F58]">Scroll to zoom · drag to pan/move</div>
+      </div>
     </div>
   );
 }
