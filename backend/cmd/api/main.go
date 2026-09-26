@@ -34,6 +34,7 @@ import (
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/push"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/rbac"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/retention"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/secrets"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/sites"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/snmp"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/snmptrap"
@@ -85,6 +86,22 @@ func main() {
 		log.Printf("PostgreSQL connection ready")
 	} else {
 		log.Printf("DATABASE_URL is not set; starting API without database")
+	}
+
+	// Phase 0.2 (RoutingNMS build blueprint): secrets encryption at rest.
+	// Disabled (zero-value Cipher, pure pass-through) unless
+	// ROUTINGNMS_SECRETS_KEY is set -- see internal/secrets' package doc
+	// comment for why that default is safe and what it does and doesn't
+	// cover yet. A malformed (set but invalid) key fails startup loudly
+	// rather than silently running with encryption broken.
+	secretsCipher, err := secrets.LoadKeyFromEnv()
+	if err != nil {
+		log.Fatalf("secrets: %v", err)
+	}
+	if secretsCipher.Enabled() {
+		log.Printf("secrets encryption at rest: enabled")
+	} else {
+		log.Printf("secrets encryption at rest: disabled (set ROUTINGNMS_SECRETS_KEY to enable)")
 	}
 
 	var oltRuntime *olt.RuntimeManager
@@ -349,7 +366,7 @@ func main() {
 		// channels (0017), and the incident system above: fired alerts open
 		// incidents in incidentEngine + publish to incidentStream's SSE, get
 		// persisted with RCA into ai_incidents (0015) for the Incident Hub.
-		alertRepo := alerts.Repository{DB: db}
+		alertRepo := alerts.Repository{DB: db, Secrets: secretsCipher}
 		alertEvaluator = alerts.NewEvaluator(alertRepo, incidentEngine, incidentStream)
 		alertEvalInterval := time.Duration(envInt("ALERT_EVAL_INTERVAL_SECONDS", 60)) * time.Second
 		alertEvaluator.Interval = alertEvalInterval

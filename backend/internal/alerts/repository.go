@@ -9,6 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/secrets"
 )
 
 // Repository persists named alert rules (`alert_rules`, migration 0016) and
@@ -16,7 +18,14 @@ import (
 // data layer for Sprint 2's generic alert engine: previously `internal/alerts`
 // was a purely in-memory threshold engine with no persistence, no API and no
 // UI.
-type Repository struct{ DB *pgxpool.Pool }
+//
+// Secrets is Phase 0.2 of the RoutingNMS build blueprint: the zero value
+// (no key configured) makes SaveChannel/ListChannels behave exactly as
+// before this field existed -- see internal/secrets' package doc comment.
+type Repository struct {
+	DB      *pgxpool.Pool
+	Secrets secrets.Cipher
+}
 
 // PersistedRule is a `alert_rules` row. Condition is the parsed condition_config
 // JSONB (e.g. {"metric":"icmp_loss_pct","operator":">","threshold":30,"unit":"%"}).
@@ -227,7 +236,13 @@ func (r Repository) ListChannels(ctx context.Context, tenantID string) ([]Persis
 		if err := rows.Scan(&ch.ID, &ch.TenantID, &ch.Name, &ch.ChannelType, &cfg, &ch.Enabled, &ch.CreatedAt); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(cfg, &ch.Config)
+		// DecryptJSON transparently handles both encrypted rows (saved
+		// while Secrets was configured) and legacy/disabled-cipher plain
+		// JSON rows -- see internal/secrets' doc comment. A decrypt
+		// failure (wrong/missing key) is swallowed to an empty config
+		// rather than failing the whole list, matching this method's
+		// pre-existing `_ = json.Unmarshal(...)` best-effort behavior.
+		_ = r.Secrets.DecryptJSON(cfg, &ch.Config)
 		out = append(out, ch)
 	}
 	return out, rows.Err()
@@ -244,9 +259,9 @@ func (r Repository) SaveChannel(ctx context.Context, ch PersistedChannel) (Persi
 	if ch.ChannelType == "" {
 		return PersistedChannel{}, fmt.Errorf("channel type is required")
 	}
-	cfg, err := json.Marshal(ch.Config)
+	cfg, err := r.Secrets.EncryptJSON(ch.Config)
 	if err != nil {
-		return PersistedChannel{}, err
+		return PersistedChannel{}, fmt.Errorf("encrypt channel config: %w", err)
 	}
 	err = r.DB.QueryRow(ctx, `INSERT INTO notification_channels (tenant_id,name,channel_type,config,is_enabled)
 		VALUES ($1,$2,$3,$4,$5) RETURNING id,created_at`,
