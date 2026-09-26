@@ -21,6 +21,8 @@ import {
   type RuntimeState,
   type Alert,
   type DeviceHealth,
+  type UptimeSummary,
+  type DeviceUptime,
 } from "./widgets";
 
 const ORG = "tenant-1";
@@ -38,6 +40,7 @@ export default function DashboardPage() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [health, setHealth] = useState<DeviceHealth[]>([]);
   const [healthLoading, setHealthLoading] = useState(true);
+  const [uptime, setUptime] = useState<UptimeSummary | null>(null);
   const [graph, setGraph] = useState<TopologyGraph>({ nodes: [], links: [] });
   const [dragState, setDragState] = useState<{ draggedId: DashboardWidgetId | null; overId: DashboardWidgetId | null }>({ draggedId: null, overId: null });
 
@@ -53,7 +56,21 @@ export default function DashboardPage() {
     } finally {
       setHealthLoading(false);
     }
+    try {
+      setUptime(await apiFetch<UptimeSummary>(`/devices/uptime-summary?organizationId=${ORG}`));
+    } catch {
+      // Uptime history is a nice-to-have on top of the live health probe
+      // above -- an empty/failed fetch just leaves the fleet-status tile
+      // and per-device "% 24h" labels blank, nothing else on the page
+      // depends on it.
+    }
   };
+
+  const uptimeById = useMemo(() => {
+    const map: Record<string, DeviceUptime> = {};
+    for (const d of uptime?.devices ?? []) map[d.deviceId] = d;
+    return map;
+  }, [uptime]);
 
   useEffect(() => {
     let active = true;
@@ -122,7 +139,7 @@ export default function DashboardPage() {
   const widgetContent: Record<DashboardWidgetId, React.ReactNode> = {
     "infra-map": <InfraMapWidget nodes={graph.nodes} links={graph.links} />,
     performance: <PerformanceWidget health={health} />,
-    "device-status": <DeviceStatusWidget health={health} loading={healthLoading} />,
+    "device-status": <DeviceStatusWidget health={health} loading={healthLoading} uptimeById={uptimeById} />,
     "incident-summary": <IncidentSummaryWidget alerts={alerts} />,
     "event-log": <EventLogWidget alerts={alerts} />,
     "alerts-by-source": <AlertsBySourceWidget alerts={alerts} />,
@@ -152,6 +169,27 @@ export default function DashboardPage() {
         />
         <StatCard label="Global Latency" value={avgLatency ? avgLatency.toFixed(0) : "—"} unit="ms" sub="Average across reachable devices" accent={avgLatency > LATENCY_VIOLATION_MS ? "text-[#F78166]" : "text-[#3FB950]"} />
         <StatCard label="Threshold Violations" value={violations} sub={`Devices ≥ ${LATENCY_VIOLATION_MS}ms`} accent={violations ? "text-[#D29922]" : "text-[#3FB950]"} />
+        <StatCard
+          label="Fleet Status"
+          value={
+            uptime ? (
+              <span>
+                <span className="text-[#3FB950]">{uptime.up}</span>
+                <span className="text-[13px] font-normal text-[#8B949E]"> up</span>
+                {" / "}
+                <span className="text-[#F78166]">{uptime.down}</span>
+                <span className="text-[13px] font-normal text-[#8B949E]"> down</span>
+                {" / "}
+                <span className="text-[#D29922]">{uptime.warning}</span>
+                <span className="text-[13px] font-normal text-[#8B949E]"> warn</span>
+              </span>
+            ) : (
+              "—"
+            )
+          }
+          sub={uptime ? `${uptime.total} devices${uptime.unknown ? ` · ${uptime.unknown} not yet probed` : ""}` : "Based on stored ping history"}
+          accent={uptime && uptime.down ? "text-[#F78166]" : "text-[#3FB950]"}
+        />
       </div>
 
       <DashboardToolbar />

@@ -142,6 +142,96 @@ func (r Repository) History(ctx context.Context, deviceID string, limit int) ([]
 	return out, rows.Err()
 }
 
+// UptimeSummary is the per-device rollup consumed by the dashboard's fleet
+// status tile and device-status widget (Feature 1.3 -- Core Dashboard):
+// what fraction of stored ping_results in the last 24h/7d were reachable,
+// plus the most recent sample so callers can derive an up/down/warning
+// label without a second live probe. All fields are nil when a device has
+// no ping_results rows in the relevant window (icmp_enabled=false, or
+// simply not probed yet) -- callers render that as "unknown", not "down".
+type UptimeSummary struct {
+	Uptime24h     *float64
+	Uptime7d      *float64
+	LastReachable *bool
+	LastLossPct   *float64
+}
+
+// UptimeSummaries computes UptimeSummary for each of the given device IDs in
+// one round trip. ping_results retains 7 days of history (pruned by
+// PruneOlderThan), so the 7d figure is the deepest lookback available.
+func (r Repository) UptimeSummaries(ctx context.Context, deviceIDs []string) (map[string]UptimeSummary, error) {
+	if r.DB == nil {
+		return nil, fmt.Errorf("ping repository is not initialized")
+	}
+	out := make(map[string]UptimeSummary, len(deviceIDs))
+	if len(deviceIDs) == 0 {
+		return out, nil
+	}
+
+	rows, err := r.DB.Query(ctx, `
+		SELECT device_id::text,
+			COUNT(*) FILTER (WHERE probed_at >= now() - interval '24 hours') AS total_24h,
+			COUNT(*) FILTER (WHERE probed_at >= now() - interval '24 hours' AND is_reachable) AS up_24h,
+			COUNT(*) FILTER (WHERE probed_at >= now() - interval '7 days') AS total_7d,
+			COUNT(*) FILTER (WHERE probed_at >= now() - interval '7 days' AND is_reachable) AS up_7d
+		FROM ping_results
+		WHERE device_id::text = ANY($1)
+		GROUP BY device_id`, deviceIDs)
+	if err != nil {
+		return nil, err
+	}
+	func() {
+		defer rows.Close()
+		for rows.Next() {
+			var id string
+			var total24, up24, total7, up7 int64
+			if err = rows.Scan(&id, &total24, &up24, &total7, &up7); err != nil {
+				return
+			}
+			s := out[id]
+			if total24 > 0 {
+				v := float64(up24) / float64(total24) * 100
+				s.Uptime24h = &v
+			}
+			if total7 > 0 {
+				v := float64(up7) / float64(total7) * 100
+				s.Uptime7d = &v
+			}
+			out[id] = s
+		}
+	}()
+	if err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	latestRows, err := r.DB.Query(ctx, `
+		SELECT DISTINCT ON (device_id) device_id::text, is_reachable, loss_pct
+		FROM ping_results
+		WHERE device_id::text = ANY($1)
+		ORDER BY device_id, probed_at DESC`, deviceIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer latestRows.Close()
+	for latestRows.Next() {
+		var id string
+		var reachable bool
+		var loss float64
+		if err := latestRows.Scan(&id, &reachable, &loss); err != nil {
+			return nil, err
+		}
+		s := out[id]
+		rb, lb := reachable, loss
+		s.LastReachable = &rb
+		s.LastLossPct = &lb
+		out[id] = s
+	}
+	return out, latestRows.Err()
+}
+
 // PruneOlderThan deletes ping_results older than age (7 days by default).
 func (r Repository) PruneOlderThan(ctx context.Context, age time.Duration) (int64, error) {
 	if r.DB == nil {

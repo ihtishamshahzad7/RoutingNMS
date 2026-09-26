@@ -15,6 +15,13 @@ export type RuntimeState = { oltId: string; running: boolean; startedAt?: string
 export type Alert = { id: number; oltId: string; ponId: string; onuId: string; code: string; severity: string; message: string; status: string; lastSeen: string };
 export type DeviceHealth = { id: string; name: string; address: string; deviceType: string; vendor?: string; method: "SNMP" | "TCP"; reachable: boolean; latencyMs: number; checkedAt: string; error?: string };
 
+// Feature 1.3 (Core Dashboard): per-device 24h/7d uptime % derived from
+// stored ping_results history (GET /api/v1/devices/uptime-summary), keyed
+// by device id -- separate from DeviceHealth, which is a live probe taken
+// right now. A device shows "—" here until it has accumulated ICMP history.
+export type DeviceUptime = { deviceId: string; name: string; address: string; status: "up" | "down" | "warning" | "unknown"; uptime24h?: number; uptime7d?: number };
+export type UptimeSummary = { devices: DeviceUptime[]; up: number; down: number; warning: number; unknown: number; total: number };
+
 function formatTime(v?: string) {
   return v ? new Date(v).toLocaleString() : "—";
 }
@@ -80,26 +87,32 @@ export function PerformanceWidget({ health }: { health: DeviceHealth[] }) {
 }
 
 // --- Module C: Device Status & Availability -----------------------------
-export function DeviceStatusWidget({ health, loading }: { health: DeviceHealth[]; loading: boolean }) {
+export function DeviceStatusWidget({ health, loading, uptimeById }: { health: DeviceHealth[]; loading: boolean; uptimeById?: Record<string, DeviceUptime> }) {
   return (
     <div className="space-y-1.5">
       {health.length ? (
-        health.map((d) => (
-          <div
-            key={d.id}
-            className="flex items-center justify-between gap-2 rounded-[6px] border-l-2 bg-[#0D1117] px-2.5 py-1.5"
-            style={{ borderLeftColor: d.reachable ? "#3FB950" : "#F78166" }}
-          >
-            <div className="min-w-0">
-              <Link href={`/devices/${d.id}`} className="block truncate text-xs font-medium text-[#58A6FF] hover:underline">{d.name}</Link>
-              <span className="mono text-[9px] text-[#484F58]">{d.address}</span>
+        health.map((d) => {
+          const u = uptimeById?.[d.id];
+          return (
+            <div
+              key={d.id}
+              className="flex items-center justify-between gap-2 rounded-[6px] border-l-2 bg-[#0D1117] px-2.5 py-1.5"
+              style={{ borderLeftColor: d.reachable ? "#3FB950" : "#F78166" }}
+            >
+              <div className="min-w-0">
+                <Link href={`/devices/${d.id}`} className="block truncate text-xs font-medium text-[#58A6FF] hover:underline">{d.name}</Link>
+                <span className="mono text-[9px] text-[#484F58]">{d.address}</span>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <span className="mono text-[10px] text-[#8B949E]" title="24h uptime, from stored ping history">
+                  {u?.uptime24h != null ? `${u.uptime24h.toFixed(1)}% 24h` : "—"}
+                </span>
+                <span className="mono text-[10px] text-[#8B949E]">{d.latencyMs.toFixed(0)}ms</span>
+                <StatusPill status={d.reachable ? "up" : "down"} label={d.reachable ? "Up" : "Down"} pulse={!d.reachable} />
+              </div>
             </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <span className="mono text-[10px] text-[#8B949E]">{d.latencyMs.toFixed(0)}ms</span>
-              <StatusPill status={d.reachable ? "up" : "down"} label={d.reachable ? "Up" : "Down"} pulse={!d.reachable} />
-            </div>
-          </div>
-        ))
+          );
+        })
       ) : (
         <div className="py-8 text-center text-xs text-[#8B949E]">{loading ? "Checking devices…" : "No registered devices yet."}</div>
       )}

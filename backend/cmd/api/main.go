@@ -439,6 +439,11 @@ func main() {
 			http.NotFound(w, r)
 		})))
 
+		// Fleet-wide uptime rollup for the dashboard (Feature 1.3 -- Core
+		// Dashboard): Up/Down/Warning/Total tile + per-device 24h/7d uptime %,
+		// derived from the same ping_results history as the routes above.
+		mux.Handle("GET /api/v1/devices/uptime-summary", authHandler.Middleware(http.HandlerFunc(pingAPI.UptimeSummary)))
+
 		// DNS resolution monitor live/check, powering the "DNS Check" section
 		// on the device detail page, mirroring the ping live/probe routes
 		// above.
@@ -707,6 +712,7 @@ func main() {
 		mux.HandleFunc("GET /api/v1/devices", unavailable)
 		mux.HandleFunc("POST /api/v1/devices", unavailable)
 		mux.HandleFunc("GET /api/v1/devices/health", unavailable)
+		mux.HandleFunc("GET /api/v1/devices/uptime-summary", unavailable)
 		mux.HandleFunc("POST /api/v1/devices/test", unavailable)
 		mux.HandleFunc("PUT /api/v1/devices/", unavailable)
 		mux.HandleFunc("PUT /api/v1/devices/{id}/http-check", unavailable)

@@ -1339,6 +1339,30 @@
         ]
       }
     },
+    "/api/v1/devices/uptime-summary": {
+      "get": {
+        "summary": "GET /api/v1/devices/uptime-summary",
+        "tags": [
+          "devices"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
     "/api/v1/devices/{id}/dns-check": {
       "put": {
         "summary": "PUT /api/v1/devices/{id}/dns-check",
