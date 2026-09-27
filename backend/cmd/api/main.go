@@ -678,6 +678,7 @@ func main() {
 		mux.Handle("PUT /api/v1/maintenance-windows/{id}", authHandler.Middleware(maintenance.AdminAPI{Repo: maintenanceRepo}))
 		mux.Handle("DELETE /api/v1/maintenance-windows/{id}", authHandler.Middleware(maintenance.AdminAPI{Repo: maintenanceRepo}))
 		mux.Handle("PUT /api/v1/maintenance-windows/{id}/items", authHandler.Middleware(maintenance.ItemsAPI{Repo: maintenanceRepo}))
+		mux.Handle("GET /api/v1/maintenance-windows/for-device/{id}", authHandler.Middleware(maintenance.IntervalsAPI{DB: db}))
 
 		tagsRepo := tags.Repository{DB: db}
 		mux.Handle("GET /api/v1/tags", authHandler.Middleware(tags.AdminAPI{Repo: tagsRepo}))
@@ -859,6 +860,7 @@ func main() {
 		mux.HandleFunc("PUT /api/v1/maintenance-windows/{id}", unavailable)
 		mux.HandleFunc("DELETE /api/v1/maintenance-windows/{id}", unavailable)
 		mux.HandleFunc("PUT /api/v1/maintenance-windows/{id}/items", unavailable)
+		mux.HandleFunc("GET /api/v1/maintenance-windows/for-device/{id}", unavailable)
 		mux.HandleFunc("GET /api/v1/tags", unavailable)
 		mux.HandleFunc("POST /api/v1/tags", unavailable)
 		mux.HandleFunc("PUT /api/v1/tags/{id}", unavailable)

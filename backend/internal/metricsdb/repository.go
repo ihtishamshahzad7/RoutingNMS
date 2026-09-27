@@ -81,15 +81,21 @@ func (r Repository) RecordBatch(ctx context.Context, samples []Sample) error {
 // Query returns each requested metric's history for one subject over the
 // last `since` duration, ordered oldest-first (chart-ready).
 func (r Repository) Query(ctx context.Context, subjectType, subjectID string, metricNames []string, since time.Duration) ([]Series, error) {
+	return r.QueryBetween(ctx, subjectType, subjectID, metricNames, time.Now().UTC().Add(-since), time.Now().UTC())
+}
+
+// QueryBetween is Query with explicit bounds instead of "since now" --
+// backs the Download Report PDF (6-page rebuild, item 2.4), where the
+// caller picks an arbitrary past date range rather than a 1h/24h/7d preset.
+func (r Repository) QueryBetween(ctx context.Context, subjectType, subjectID string, metricNames []string, from, to time.Time) ([]Series, error) {
 	if r.DB == nil {
 		return nil, fmt.Errorf("metricsdb repository is not initialized")
 	}
 	out := make([]Series, 0, len(metricNames))
-	cutoff := time.Now().UTC().Add(-since)
 	for _, metric := range metricNames {
 		rows, err := r.DB.Query(ctx, `SELECT value, recorded_at FROM metric_samples
-			WHERE subject_type=$1 AND subject_id=$2 AND metric_name=$3 AND recorded_at >= $4
-			ORDER BY recorded_at ASC`, subjectType, subjectID, metric, cutoff)
+			WHERE subject_type=$1 AND subject_id=$2 AND metric_name=$3 AND recorded_at >= $4 AND recorded_at <= $5
+			ORDER BY recorded_at ASC`, subjectType, subjectID, metric, from, to)
 		if err != nil {
 			return nil, err
 		}

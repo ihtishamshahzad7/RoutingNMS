@@ -120,19 +120,39 @@ func (a API) HistoryRange(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	var window time.Duration
-	switch r.URL.Query().Get("range") {
-	case "1h":
-		window = time.Hour
-	case "7d":
-		window = 7 * 24 * time.Hour
-	default:
-		window = 24 * time.Hour
-	}
-	series, err := a.Metrics.Query(r.Context(), "device", id, []string{"port_check_up", "port_check_latency_ms"}, window)
-	if err != nil {
-		http.Error(w, "failed to load port-check history", 500)
-		return
+	// Explicit ?from=&to= (RFC3339) wins over the range preset -- used by
+	// the Download Report PDF (item 2.4) to pull an arbitrary past date
+	// range instead of a 1h/24h/7d window ending "now".
+	var series []metricsdb.Series
+	if fromStr, toStr := r.URL.Query().Get("from"), r.URL.Query().Get("to"); fromStr != "" && toStr != "" {
+		from, err1 := time.Parse(time.RFC3339, fromStr)
+		to, err2 := time.Parse(time.RFC3339, toStr)
+		if err1 != nil || err2 != nil {
+			http.Error(w, "from/to must be RFC3339 timestamps", http.StatusBadRequest)
+			return
+		}
+		s, err := a.Metrics.QueryBetween(r.Context(), "device", id, []string{"port_check_up", "port_check_latency_ms"}, from, to)
+		if err != nil {
+			http.Error(w, "failed to load port-check history", 500)
+			return
+		}
+		series = s
+	} else {
+		var window time.Duration
+		switch r.URL.Query().Get("range") {
+		case "1h":
+			window = time.Hour
+		case "7d":
+			window = 7 * 24 * time.Hour
+		default:
+			window = 24 * time.Hour
+		}
+		s, err := a.Metrics.Query(r.Context(), "device", id, []string{"port_check_up", "port_check_latency_ms"}, window)
+		if err != nil {
+			http.Error(w, "failed to load port-check history", 500)
+			return
+		}
+		series = s
 	}
 	var upSeries, latSeries metricsdb.Series
 	for _, s := range series {

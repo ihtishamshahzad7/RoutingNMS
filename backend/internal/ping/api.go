@@ -70,6 +70,24 @@ func (a API) HistoryRange(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	// Explicit ?from=&to= (RFC3339) wins over the range preset -- used by
+	// the Download Report PDF (item 2.4) to pull an arbitrary past date
+	// range instead of a 1h/24h/7d window ending "now".
+	if fromStr, toStr := r.URL.Query().Get("from"), r.URL.Query().Get("to"); fromStr != "" && toStr != "" {
+		from, err1 := time.Parse(time.RFC3339, fromStr)
+		to, err2 := time.Parse(time.RFC3339, toStr)
+		if err1 != nil || err2 != nil {
+			http.Error(w, "from/to must be RFC3339 timestamps", http.StatusBadRequest)
+			return
+		}
+		history, err := a.Repo.HistoryBetween(r.Context(), id, from, to)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"history": history})
+		return
+	}
 	var window time.Duration
 	switch r.URL.Query().Get("range") {
 	case "1h":

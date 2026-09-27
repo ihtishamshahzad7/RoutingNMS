@@ -18,10 +18,12 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Activity, Plug } from "lucide-react";
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
+import { Download } from "lucide-react";
 import { apiFetch, ApiError } from "../../../../lib/api";
-import { EngPanel } from "../../../../components/ui/engineer";
+import { EngPanel, EngButton, EngModal, EngField, EngInput } from "../../../../components/ui/engineer";
 import { HeartbeatBar, type Beat } from "../../dashboard/HeartbeatBar";
 import { aggregate, type RawPoint } from "../../../../lib/monitoring-aggregate";
+import { buildReportData, generateReportPDF } from "../../../../lib/monitoring-report";
 
 const ORG = "tenant-1";
 type Device = {
@@ -78,6 +80,36 @@ export default function ConnectivityMonitoringDetailPage() {
   const id = params.id;
   const [device, setDevice] = useState<Device | null>(null);
   const [range, setRange] = useState<Range>("24h");
+
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportFrom, setReportFrom] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 7);
+    return d.toISOString().slice(0, 10);
+  });
+  const [reportTo, setReportTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [reportBusy, setReportBusy] = useState(false);
+  const [reportError, setReportError] = useState("");
+
+  async function downloadReport() {
+    setReportBusy(true);
+    setReportError("");
+    try {
+      const from = new Date(`${reportFrom}T00:00:00`);
+      const to = new Date(`${reportTo}T23:59:59.999`);
+      if (to.getTime() <= from.getTime()) {
+        setReportError("End date must be after start date.");
+        return;
+      }
+      const data = await buildReportData(id, from, to);
+      await generateReportPDF(data);
+      setReportOpen(false);
+    } catch (e) {
+      setReportError(e instanceof ApiError ? e.message : "Unable to generate the report.");
+    } finally {
+      setReportBusy(false);
+    }
+  }
 
   const [history, setHistory] = useState<ProbeResult[]>([]);
   const [loading, setLoading] = useState(true);
@@ -191,8 +223,44 @@ export default function ConnectivityMonitoringDetailPage() {
               </button>
             ))}
           </div>
+          <EngButton onClick={() => setReportOpen(true)}>
+            <Download size={14} /> Download Report
+          </EngButton>
         </div>
       </div>
+
+      {reportOpen && (
+        <EngModal
+          title="Download Report"
+          subtitle="PDF covering ICMP and Port/Service checks for the selected date range"
+          onClose={() => (reportBusy ? null : setReportOpen(false))}
+          footer={
+            <>
+              <EngButton onClick={() => setReportOpen(false)} disabled={reportBusy}>
+                Cancel
+              </EngButton>
+              <EngButton variant="primary" onClick={downloadReport} disabled={reportBusy}>
+                {reportBusy ? "Generating…" : "Generate PDF"}
+              </EngButton>
+            </>
+          }
+        >
+          <div className="grid grid-cols-2 gap-3">
+            <EngField label="From">
+              <EngInput type="date" value={reportFrom} max={reportTo} onChange={(e) => setReportFrom(e.target.value)} />
+            </EngField>
+            <EngField label="To">
+              <EngInput type="date" value={reportTo} min={reportFrom} onChange={(e) => setReportTo(e.target.value)} />
+            </EngField>
+          </div>
+          {reportError && <p className="mt-3 text-[12px] text-[#C4362D]">{reportError}</p>}
+          <p className="mt-3 text-[11px] text-[#8A96A3]">
+            The report lists overall uptime %, average latency/response time, and every up/down event for each
+            configured check type. Time spent in an active maintenance window is excluded from downtime and the
+            uptime % calculation.
+          </p>
+        </EngModal>
+      )}
 
       <EngPanel title={`ICMP · Latency (RTT ms)${range === "1h" ? "" : range === "24h" ? " · hourly avg" : " · daily avg"}`}>
         {loading ? (

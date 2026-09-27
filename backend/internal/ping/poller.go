@@ -171,6 +171,32 @@ func (r Repository) HistoryRange(ctx context.Context, deviceID string, since tim
 	return out, rows.Err()
 }
 
+// HistoryBetween is HistoryRange with an explicit upper bound instead of
+// "since now" -- backs the Download Report PDF (6-page rebuild, item 2.4),
+// where the caller picks an arbitrary past date range rather than a
+// 1h/24h/7d preset. Same 5000-row cap.
+func (r Repository) HistoryBetween(ctx context.Context, deviceID string, from, to time.Time) ([]ProbeResult, error) {
+	if r.DB == nil {
+		return nil, fmt.Errorf("ping repository is not initialized")
+	}
+	rows, err := r.DB.Query(ctx, `SELECT id,device_id,probed_at,rtt_ms,jitter_ms,loss_pct,ttl,is_reachable
+		FROM ping_results WHERE device_id=$1 AND probed_at>=$2 AND probed_at<=$3
+		ORDER BY probed_at ASC LIMIT 5000`, deviceID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ProbeResult{}
+	for rows.Next() {
+		var p ProbeResult
+		if err := rows.Scan(&p.ID, &p.DeviceID, &p.ProbedAt, &p.RTTMs, &p.JitterMs, &p.LossPct, &p.TTL, &p.Reachable); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // UptimeSummary is the per-device rollup consumed by the dashboard's fleet
 // status tile and device-status widget (Feature 1.3 -- Core Dashboard):
 // what fraction of stored ping_results in the last 24h/7d were reachable,
