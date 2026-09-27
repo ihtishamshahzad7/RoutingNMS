@@ -73,8 +73,8 @@ func (r Repository) Store(ctx context.Context, deviceID, configText, source stri
 	var b Backup
 	err := r.DB.QueryRow(ctx, `
 		INSERT INTO device_config_backups (device_id, config_text, byte_size, sha256, source)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING id, device_id, byte_size, sha256, source, taken_at
+		VALUES ($1::bigint, $2, $3, $4, $5)
+		RETURNING id, device_id::text, byte_size, sha256, source, taken_at
 	`, deviceID, configText, len(configText), hash, source).
 		Scan(&b.ID, &b.DeviceID, &b.ByteSize, &b.SHA256, &b.Source, &b.TakenAt)
 	if err != nil {
@@ -91,9 +91,9 @@ func (r Repository) Store(ctx context.Context, deviceID, configText, source stri
 func (r Repository) prune(ctx context.Context, deviceID string) error {
 	_, err := r.DB.Exec(ctx, `
 		DELETE FROM device_config_backups
-		WHERE device_id = $1 AND id NOT IN (
+		WHERE device_id = $1::bigint AND id NOT IN (
 			SELECT id FROM device_config_backups
-			WHERE device_id = $1
+			WHERE device_id = $1::bigint
 			ORDER BY taken_at DESC
 			LIMIT $2
 		)
@@ -104,8 +104,8 @@ func (r Repository) prune(ctx context.Context, deviceID string) error {
 func (r Repository) latest(ctx context.Context, deviceID string) (Backup, bool, error) {
 	var b Backup
 	err := r.DB.QueryRow(ctx, `
-		SELECT id, device_id, byte_size, sha256, source, taken_at
-		FROM device_config_backups WHERE device_id = $1
+		SELECT id, device_id::text, byte_size, sha256, source, taken_at
+		FROM device_config_backups WHERE device_id = $1::bigint
 		ORDER BY taken_at DESC LIMIT 1
 	`, deviceID).Scan(&b.ID, &b.DeviceID, &b.ByteSize, &b.SHA256, &b.Source, &b.TakenAt)
 	if err != nil {
@@ -121,8 +121,8 @@ func (r Repository) latest(ctx context.Context, deviceID string) (Backup, bool, 
 // for a device, newest first.
 func (r Repository) List(ctx context.Context, deviceID string) ([]Backup, error) {
 	rows, err := r.DB.Query(ctx, `
-		SELECT id, device_id, byte_size, sha256, source, taken_at
-		FROM device_config_backups WHERE device_id = $1
+		SELECT id, device_id::text, byte_size, sha256, source, taken_at
+		FROM device_config_backups WHERE device_id = $1::bigint
 		ORDER BY taken_at DESC
 	`, deviceID)
 	if err != nil {
@@ -146,8 +146,8 @@ func (r Repository) List(ctx context.Context, deviceID string) ([]Backup, error)
 func (r Repository) Get(ctx context.Context, deviceID string, id int64) (Backup, error) {
 	var b Backup
 	err := r.DB.QueryRow(ctx, `
-		SELECT id, device_id, config_text, byte_size, sha256, source, taken_at
-		FROM device_config_backups WHERE device_id = $1 AND id = $2
+		SELECT id, device_id::text, config_text, byte_size, sha256, source, taken_at
+		FROM device_config_backups WHERE device_id = $1::bigint AND id = $2
 	`, deviceID, id).Scan(&b.ID, &b.DeviceID, &b.ConfigText, &b.ByteSize, &b.SHA256, &b.Source, &b.TakenAt)
 	if err != nil {
 		return Backup{}, fmt.Errorf("config backup not found: %w", err)
@@ -157,6 +157,6 @@ func (r Repository) Get(ctx context.Context, deviceID string, id int64) (Backup,
 
 // Delete removes a single stored version, scoped to the given device.
 func (r Repository) Delete(ctx context.Context, deviceID string, id int64) error {
-	_, err := r.DB.Exec(ctx, `DELETE FROM device_config_backups WHERE device_id = $1 AND id = $2`, deviceID, id)
+	_, err := r.DB.Exec(ctx, `DELETE FROM device_config_backups WHERE device_id = $1::bigint AND id = $2`, deviceID, id)
 	return err
 }
