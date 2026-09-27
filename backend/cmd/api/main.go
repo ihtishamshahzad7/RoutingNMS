@@ -439,6 +439,8 @@ func main() {
 			switch {
 			case strings.HasSuffix(r.URL.Path, "/live"):
 				pingAPI.Live(w, r)
+			case strings.HasSuffix(r.URL.Path, "/history-range"):
+				pingAPI.HistoryRange(w, r)
 			case strings.HasSuffix(r.URL.Path, "/history"):
 				pingAPI.History(w, r)
 			default:

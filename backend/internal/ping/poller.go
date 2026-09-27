@@ -142,6 +142,35 @@ func (r Repository) History(ctx context.Context, deviceID string, limit int) ([]
 	return out, rows.Err()
 }
 
+// HistoryRange returns every probe since `since`, oldest first -- powers the
+// ICMP Monitoring detail page's 1h/24h/7d graph (6-page rebuild, item 2),
+// where the caller picks a time window rather than a row count. Capped at
+// 5000 rows (7d at the default 30s interval is ~20,160 probes) so a device
+// left at a very short custom interval can't return an unbounded response;
+// this matches History's own existing 500-row cap in spirit, just sized for
+// a multi-day window instead of a recent-activity sparkline.
+func (r Repository) HistoryRange(ctx context.Context, deviceID string, since time.Time) ([]ProbeResult, error) {
+	if r.DB == nil {
+		return nil, fmt.Errorf("ping repository is not initialized")
+	}
+	rows, err := r.DB.Query(ctx, `SELECT id,device_id,probed_at,rtt_ms,jitter_ms,loss_pct,ttl,is_reachable
+		FROM ping_results WHERE device_id=$1 AND probed_at>=$2
+		ORDER BY probed_at ASC LIMIT 5000`, deviceID, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ProbeResult{}
+	for rows.Next() {
+		var p ProbeResult
+		if err := rows.Scan(&p.ID, &p.DeviceID, &p.ProbedAt, &p.RTTMs, &p.JitterMs, &p.LossPct, &p.TTL, &p.Reachable); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // UptimeSummary is the per-device rollup consumed by the dashboard's fleet
 // status tile and device-status widget (Feature 1.3 -- Core Dashboard):
 // what fraction of stored ping_results in the last 24h/7d were reachable,

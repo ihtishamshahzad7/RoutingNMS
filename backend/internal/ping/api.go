@@ -60,6 +60,33 @@ func (a API) History(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"history": history})
 }
 
+// HistoryRange serves GET /api/v1/ping/{id}/history-range?range=1h|24h|7d --
+// the ICMP Monitoring detail page's graph (6-page rebuild, item 2). Unlike
+// History (a row-count window), the caller picks a time window; an
+// unrecognized or missing `range` defaults to 24h.
+func (a API) HistoryRange(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	var window time.Duration
+	switch r.URL.Query().Get("range") {
+	case "1h":
+		window = time.Hour
+	case "7d":
+		window = 7 * 24 * time.Hour
+	default:
+		window = 24 * time.Hour
+	}
+	history, err := a.Repo.HistoryRange(r.Context(), id, time.Now().Add(-window))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"history": history})
+}
+
 // Probe serves POST /api/v1/ping/{id}/probe - forces an immediate ICMP probe
 // and returns the result (used by a "Ping now" button).
 func (a API) Probe(w http.ResponseWriter, r *http.Request) {
