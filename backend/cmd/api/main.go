@@ -41,6 +41,7 @@ import (
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/snmp"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/snmptrap"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/sshcheck"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/portcheck"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/statuspage"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/syslog"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/tags"
@@ -120,6 +121,7 @@ func main() {
 	var pingPoller *ping.Poller
 	var dnsPoller *dnscheck.Poller
 	var sshPoller *sshcheck.Poller
+	var portCheckPoller *portcheck.Poller
 	var telnetPoller *telnetcheck.Poller
 	var topoLinkPoller *topolinks.Poller
 	var topologyEngine *topology.Discovery
@@ -233,6 +235,12 @@ func main() {
 		go sshPoller.Run(ctx, dnsPollInterval)
 		telnetPoller = telnetcheck.New(telnetcheck.Repository{DB: db}, metricsdb.Repository{DB: db})
 		go telnetPoller.Run(ctx, dnsPollInterval)
+
+		// Port/Service check (6-page rebuild, item 2.1): TCP-connect or a
+		// real HTTP(S) GET with status-code validation, same "optional
+		// per-device monitor type" pattern as SSH/Telnet above.
+		portCheckPoller = portcheck.New(portcheck.Repository{DB: db}, metricsdb.Repository{DB: db})
+		go portCheckPoller.Run(ctx, dnsPollInterval)
 
 		// Group-wise, port-level topology link monitor: polls SNMP
 		// ifOperStatus for both named interfaces on every manually-defined
@@ -496,6 +504,23 @@ func main() {
 			}
 			http.NotFound(w, r)
 		})))
+		portCheckAPI := portcheck.API{Devices: devicesRepo, Poller: portCheckPoller}
+		mux.Handle("GET /api/v1/port-check/summary", authHandler.Middleware(http.HandlerFunc(portCheckAPI.Summary)))
+		mux.Handle("GET /api/v1/port-check/", authHandler.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/live") {
+				portCheckAPI.Live(w, r)
+				return
+			}
+			http.NotFound(w, r)
+		})))
+		mux.Handle("POST /api/v1/port-check/", authHandler.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/check") {
+				portCheckAPI.Check(w, r)
+				return
+			}
+			http.NotFound(w, r)
+		})))
+
 		telnetAPI := telnetcheck.API{Devices: devicesRepo, Poller: telnetPoller}
 		mux.Handle("GET /api/v1/telnet/", authHandler.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if strings.HasSuffix(r.URL.Path, "/live") {
@@ -762,6 +787,9 @@ func main() {
 		mux.HandleFunc("POST /api/v1/ssh/", unavailable)
 		mux.HandleFunc("GET /api/v1/telnet/", unavailable)
 		mux.HandleFunc("POST /api/v1/telnet/", unavailable)
+		mux.HandleFunc("GET /api/v1/port-check/summary", unavailable)
+		mux.HandleFunc("GET /api/v1/port-check/", unavailable)
+		mux.HandleFunc("POST /api/v1/port-check/", unavailable)
 		mux.HandleFunc("GET /api/v1/topology-groups", unavailable)
 		mux.HandleFunc("POST /api/v1/topology-groups", unavailable)
 		mux.HandleFunc("DELETE /api/v1/topology-groups/{id}", unavailable)

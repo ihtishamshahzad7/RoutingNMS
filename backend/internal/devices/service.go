@@ -28,6 +28,15 @@ type DeviceInput struct {
 	// UpdateICMPCheck call required.
 	ICMPEnabled bool
 	ICMPIntervalSeconds int
+	// PortCheck* mirror the "Port/Service Check" toggle+fields on the Add
+	// Device popup (6-page rebuild, item 2.1) -- a TCP connect test, or for
+	// Protocol http/https a real GET with status-code validation.
+	PortCheckEnabled bool
+	PortCheckProtocol string
+	PortCheckPort int
+	PortCheckPath string
+	PortCheckAcceptedStatusCodes string
+	PortCheckIntervalSeconds int
 }
 
 type TestResult struct {

@@ -24,6 +24,7 @@ export default function DevicesPage(){
  const [checked,setChecked]=useState<Set<string>>(new Set()),[bulkBusy,setBulkBusy]=useState(false),[showAdd,setShowAdd]=useState(false),[showTest,setShowTest]=useState(false),[showDiscovery,setShowDiscovery]=useState(false);
  const [creatingGroup,setCreatingGroup]=useState(false);
  const [addressError,setAddressError]=useState("");
+ const [portCheckOn,setPortCheckOn]=useState(false),[portCheckProtocol,setPortCheckProtocol]=useState("tcp");
  const addFormRef=useRef<HTMLFormElement>(null);
  async function load(){setLoading(true);try{setDevices(await apiFetch<Device[]>(`/devices?organizationId=${ORG}`))}catch(e){setMessage(e instanceof ApiError?e.message:"Unable to load devices.")}finally{setLoading(false)}}
  useEffect(()=>{load()},[]);
@@ -47,6 +48,7 @@ export default function DevicesPage(){
   const newGroupName=String(data.get("newGroupName")||"").trim();
   const icmpEnabled=data.get("icmpEnabled")==="on";
   const snmpEnabled=data.get("snmpEnabled")==="on";
+  const portCheckEnabled=data.get("portCheckEnabled")==="on";
   const payload={
     organizationId:ORG,
     name:data.get("name"),
@@ -59,6 +61,12 @@ export default function DevicesPage(){
     snmpEnabled,
     snmpPort:Number(data.get("snmpPort")||161),
     snmp:{version:data.get("snmpVersion")||"2c",community:data.get("community")},
+    portCheckEnabled,
+    portCheckProtocol:data.get("portCheckProtocol")||"tcp",
+    portCheckPort:Number(data.get("portCheckPort")||0),
+    portCheckPath:data.get("portCheckPath")||"/",
+    portCheckAcceptedStatusCodes:data.get("portCheckAcceptedStatusCodes")||"200-299",
+    portCheckIntervalSeconds:Number(data.get("portCheckIntervalSeconds")||60),
   };
   try{
     const d=await apiFetch<Device>("/devices",{method:"POST",body:JSON.stringify(payload)});
@@ -76,10 +84,12 @@ export default function DevicesPage(){
     if(groupId!=null){
       await apiFetch(`/device-group-assignments/device/${d.id}`,{method:"PUT",body:JSON.stringify({groupId,sortOrder:0})});
     }
-    setMessage(`✓ ${d.name} registered${icmpEnabled?" · ICMP monitoring started":""}${snmpEnabled?" · SNMP enabled":""}.`);
+    setMessage(`✓ ${d.name} registered${icmpEnabled?" · ICMP monitoring started":""}${snmpEnabled?" · SNMP enabled":""}${portCheckEnabled?" · Port/Service check started":""}.`);
     form.reset();
     setCreatingGroup(false);
     setAddressError("");
+    setPortCheckOn(false);
+    setPortCheckProtocol("tcp");
     setShowAdd(false);
     await Promise.all([load(),loadGroups()]);
   }catch(err){
@@ -96,7 +106,7 @@ export default function DevicesPage(){
  const stats=useMemo(()=>({total:devices.length,monitoring:devices.filter(d=>d.enabled).length,snmp:devices.filter(d=>d.snmpConfigured).length,attention:devices.filter(d=>!d.snmpConfigured).length}),[devices]);
  const groupsView=groupSections(devices,groups,memberOf);
  return <main className="mx-auto max-w-[1500px] px-4 py-6 sm:px-6 lg:px-8">
-  <header className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[.18em] text-[#2E7BF6]"><Network size={14}/> Infrastructure / Devices</div><h1 className="text-3xl font-bold tracking-tight text-[#1F2A37]">Network device management</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-[#5C6B7A]">One professional workspace to register infrastructure, configure SNMP, verify connectivity and move devices into active monitoring.</p></div><div className="flex gap-2"><button onClick={()=>setShowTest(true)} className="inline-flex items-center gap-2 rounded-lg border border-[#DCE1E8] bg-white px-4 py-2.5 text-sm font-semibold text-[#1F2A37] hover:border-[#DCE1E8] hover:bg-[#EEF1F4]"><ShieldCheck size={16}/> Test SNMP</button><button onClick={()=>setShowDiscovery(v=>!v)} className="inline-flex items-center gap-2 rounded-lg border border-[#DCE1E8] bg-white px-4 py-2.5 text-sm font-semibold text-[#1F2A37] hover:border-[#DCE1E8] hover:bg-[#EEF1F4]"><Search size={16}/> Discover</button><button onClick={()=>{setAddressError("");setShowAdd(true)}} className="inline-flex items-center gap-2 rounded-lg bg-[#2E7BF6] px-4 py-2.5 text-sm font-medium text-white hover:bg-[#2568D4]"><Plus size={17}/> Add device</button></div></header>
+  <header className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[.18em] text-[#2E7BF6]"><Network size={14}/> Infrastructure / Devices</div><h1 className="text-3xl font-bold tracking-tight text-[#1F2A37]">Network device management</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-[#5C6B7A]">One professional workspace to register infrastructure, configure SNMP, verify connectivity and move devices into active monitoring.</p></div><div className="flex gap-2"><button onClick={()=>setShowTest(true)} className="inline-flex items-center gap-2 rounded-lg border border-[#DCE1E8] bg-white px-4 py-2.5 text-sm font-semibold text-[#1F2A37] hover:border-[#DCE1E8] hover:bg-[#EEF1F4]"><ShieldCheck size={16}/> Test SNMP</button><button onClick={()=>setShowDiscovery(v=>!v)} className="inline-flex items-center gap-2 rounded-lg border border-[#DCE1E8] bg-white px-4 py-2.5 text-sm font-semibold text-[#1F2A37] hover:border-[#DCE1E8] hover:bg-[#EEF1F4]"><Search size={16}/> Discover</button><button onClick={()=>{setAddressError("");setPortCheckOn(false);setPortCheckProtocol("tcp");setShowAdd(true)}} className="inline-flex items-center gap-2 rounded-lg bg-[#2E7BF6] px-4 py-2.5 text-sm font-medium text-white hover:bg-[#2568D4]"><Plus size={17}/> Add device</button></div></header>
   {message&&<div className="mb-5 flex items-center justify-between rounded-lg border border-[#BFD7FB] bg-[#EEF3FD] px-4 py-3 text-sm text-[#1D4ED8]"><span>{message}</span><button onClick={()=>setMessage("")}><X size={15}/></button></div>}
   <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Stat icon={Server} label="Total devices" value={stats.total} hint="Registered infrastructure"/><Stat icon={Activity} label="Monitoring active" value={stats.monitoring} hint={`${stats.total?Math.round(stats.monitoring/stats.total*100):0}% of inventory`} good/><Stat icon={ShieldCheck} label="SNMP configured" value={stats.snmp} hint="Ready for polling" good/><Stat icon={Zap} label="Needs attention" value={stats.attention} hint="SNMP not configured" warn={stats.attention>0}/></div>
   {showDiscovery&&<section className={`${card} mb-6 overflow-hidden`}><div className="flex items-center justify-between border-b border-[#DCE1E8] px-5 py-4"><div><h2 className="font-semibold text-[#1F2A37]">Subnet discovery</h2><p className="mt-1 text-xs text-[#8A96A3]">Find SNMP-responsive routers, switches, OLTs and servers before registering them.</p></div><button onClick={()=>setShowDiscovery(false)} className="text-[#8A96A3] hover:text-[#1F2A37]"><X size={18}/></button></div><form onSubmit={startScan} className="grid gap-4 p-5 md:grid-cols-6"><Field label="CIDR" wide><input required name="cidr" placeholder="192.168.88.0/24" className={input}/></Field><Field label="Version"><select name="scanVersion" className={input}><option value="2c">SNMP v2c</option></select></Field><Field label="Community"><input name="scanCommunity" type="password" placeholder="public" className={input}/></Field><Field label="Port"><input name="scanPort" type="number" defaultValue="161" className={input}/></Field><Field label="Timeout"><input name="scanTimeoutMs" type="number" defaultValue="1500" className={input}/></Field><div className="md:col-span-6"><button disabled={scanning} className="inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2.5 text-sm font-bold text-[#1F2A37] disabled:opacity-50">{scanning?<Loader2 size={16} className="animate-spin"/>:<Search size={16}/>} {scanning?"Starting scan…":"Scan network"}</button></div></form>{scanError&&<div className="mx-5 mb-5 rounded-lg border border-[#F0C2C2] bg-[#FBEAEA] px-4 py-3 text-sm text-[#C4362D]">{scanError}</div>}{scanJob&&<div className="border-t border-[#DCE1E8] p-5"><div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs text-[#5C6B7A]"><span>{scanJob.cidr} · {scanJob.status==="running"?`Scanning ${scanJob.scanned}/${scanJob.total}`:`Complete · ${scanJob.results.length} responsive host(s)`}</span>{selectedAddrs.size>0&&<button onClick={importSelected} disabled={importing} className="rounded-lg bg-[#1E8E5A] px-3 py-2 text-xs font-medium text-white">{importing?"Importing…":`Import ${selectedAddrs.size} selected`}</button>}</div>{scanJob.status==="running"&&<div className="mb-4 h-1.5 overflow-hidden rounded-full bg-[#EEF1F4]"><div className="h-full bg-[#2568D4] transition-all" style={{width:`${scanJob.total?Math.round(scanJob.scanned/scanJob.total*100):0}%`}}/></div>}<div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead className="text-[#8A96A3]"><tr><th className="pb-2 w-8"></th><th>Address</th><th>System</th><th>Type</th><th>Vendor</th></tr></thead><tbody>{scanJob.results.map(f=><tr key={f.address} className="border-t border-[#EEF1F4]"><td className="py-2"><input type="checkbox" checked={selectedAddrs.has(f.address)} onChange={()=>setSelectedAddrs(p=>{const n=new Set(p);n.has(f.address)?n.delete(f.address):n.add(f.address);return n})}/></td><td className="py-2 font-mono">{f.address}</td><td className="py-2">{f.systemName||"—"}</td><td className="py-2 uppercase text-[#8A96A3]">{f.deviceType}</td><td className="py-2 text-[#5C6B7A]">{f.vendor||"—"}</td></tr>)}</tbody></table></div></div>}</section>}
@@ -136,6 +146,18 @@ export default function DevicesPage(){
         <EngField label="Version"><EngSelect name="snmpVersion" defaultValue="2c"><option value="2c">SNMP v2c</option><option value="3">SNMP v3</option></EngSelect></EngField>
         <EngField label="Port"><EngInput name="snmpPort" type="number" defaultValue="161"/></EngField>
         <EngField label="Community string" wide><EngInput name="community" type="password" placeholder="public"/></EngField>
+        <div className="sm:col-span-2 mt-1 rounded-[4px] border border-[#DCE1E8] p-3">
+          <EngToggle name="portCheckEnabled" checked={portCheckOn} onChange={setPortCheckOn} label="Port/Service Check" description="TCP connect test, or a real HTTP(S) request with status-code validation."/>
+        </div>
+        {portCheckOn && <>
+          <EngField label="Protocol"><EngSelect name="portCheckProtocol" value={portCheckProtocol} onChange={e=>setPortCheckProtocol(e.target.value)}><option value="tcp">TCP</option><option value="http">HTTP</option><option value="https">HTTPS</option></EngSelect></EngField>
+          <EngField label="Port"><EngInput name="portCheckPort" type="number" placeholder={portCheckProtocol==="https"?"443":portCheckProtocol==="http"?"80":"e.g. 22"} defaultValue={portCheckProtocol==="https"?"443":portCheckProtocol==="http"?"80":""}/></EngField>
+          {portCheckProtocol!=="tcp"&&<>
+            <EngField label="Path"><EngInput name="portCheckPath" defaultValue="/" placeholder="/"/></EngField>
+            <EngField label="Expected status code"><EngInput name="portCheckAcceptedStatusCodes" defaultValue="200-299" placeholder="200-299"/></EngField>
+          </>}
+          <EngField label="Check interval (seconds)" wide={portCheckProtocol==="tcp"}><EngInput name="portCheckIntervalSeconds" type="number" defaultValue="60" min="5"/></EngField>
+        </>}
       </EngSection>
     </form>
   </EngModal>}

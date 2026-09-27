@@ -174,6 +174,15 @@ func Check(ctx context.Context, url string, opts Options) Result {
 // empty acceptedCodes list falls back to the pre-Kuma-parity exact
 // expectedStatus check (0 meaning "any status is fine"), so a device
 // configured before this feature keeps behaving exactly as it did.
+// StatusAccepted is the exported form of statusAccepted, for other check
+// types that validate an HTTP(S) response against this same
+// accepted-status-codes convention (e.g. internal/portcheck's http/https
+// protocol, 6-page rebuild item 2.1) instead of re-implementing the
+// exact-code-or-"lo-hi"-range matching rules.
+func StatusAccepted(status int, acceptedCodes []string, expectedStatus int) bool {
+	return statusAccepted(status, acceptedCodes, expectedStatus)
+}
+
 func statusAccepted(status int, acceptedCodes []string, expectedStatus int) bool {
 	if len(acceptedCodes) == 0 {
 		return expectedStatus == 0 || status == expectedStatus
