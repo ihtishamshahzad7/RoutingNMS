@@ -7,7 +7,7 @@ import VoiceAlerts from "../../components/voice-alerts";
 // badge), so 24/7 wall-display surfaces are consistent.
 export default function NocLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex h-screen overflow-hidden bg-[#0D1117] text-[#E6EDF3]">
+    <div className="flex h-screen overflow-hidden bg-[#F4F6F9] text-[#1F2A37]">
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar />

@@ -15,10 +15,14 @@ import {
   AlertTriangle,
   Flame,
   Bell,
+  BellRing,
   Network,
   Cable,
   ScrollText,
   Zap,
+  Cpu,
+  Waypoints,
+  Activity,
   BookOpen,
   Wrench,
   CalendarClock,
@@ -49,6 +53,8 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
       { name: "Devices", href: "/devices", icon: Server },
+      { name: "ICMP Monitoring", href: "/icmp-monitoring", icon: Activity },
+      { name: "SNMP & Syslog Monitoring", href: "/snmp-syslog-monitoring", icon: Cpu },
       { name: "Reachability", href: "/reachability", icon: Radar },
     ],
   },
@@ -59,6 +65,7 @@ const NAV_GROUPS: NavGroup[] = [
       { name: "Access Points", href: "/access-points", icon: Wifi },
       { name: "Topology", href: "/topology", icon: Network },
       { name: "Topology Links", href: "/topology-links", icon: Cable },
+      { name: "Topology Builder", href: "/topology-builder", icon: Waypoints },
       { name: "Workspace Topology", href: "/workspace-topology", icon: FolderTree },
       { name: "Sites", href: "/sites", icon: MapPin },
       { name: "Customers", href: "/customers", icon: Users },
@@ -72,6 +79,7 @@ const NAV_GROUPS: NavGroup[] = [
       { name: "Incidents", href: "/incidents", icon: AlertTriangle },
       { name: "Incident Hub", href: "/incident-hub", icon: Flame },
       { name: "Alert Rules", href: "/alert-rules", icon: Bell },
+      { name: "Notifications Setup", href: "/notifications-setup", icon: BellRing },
       { name: "Maintenance", href: "/maintenance", icon: CalendarClock },
     ],
   },
@@ -159,31 +167,31 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="flex h-screen w-64 shrink-0 flex-col border-r border-[#21262D] bg-[#161B22]">
-      <div className="border-b border-[#21262D] px-5 py-5">
-        <div className="text-lg font-bold tracking-tight text-[#E6EDF3]">
-          Routing<span className="text-[#3FB950]">NMS</span>
+    <aside className="flex h-screen w-64 shrink-0 flex-col bg-[#1B2A41]">
+      <div className="px-5 py-5">
+        <div className="text-lg font-medium tracking-tight text-white">
+          Routing<span className="text-[#2E7BF6]">NMS</span>
         </div>
-        <div className="mt-1 flex items-center gap-2 text-xs text-[#8B949E]">
-          <span className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-[#3FB950]" : "bg-[#D29922]"}`} />
+        <div className="mt-1 flex items-center gap-2 text-xs text-[#C4CDD9]">
+          <span className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-[#1E8E5A]" : "bg-[#C77700]"}`} />
           {connected ? "Backend connected" : "Backend pending"}
         </div>
       </div>
 
-      <div className="px-3 pt-3">
-        <div className="flex items-center gap-2 rounded-[6px] border border-[#30363D] bg-[#0D1117] px-3 py-1.5 text-[#8B949E] focus-within:border-[#58A6FF]">
+      <div className="px-3 pt-1 pb-3">
+        <div className="flex items-center gap-2 rounded-[4px] border border-white/10 bg-[#152337] px-3 py-1.5 text-[#C4CDD9] focus-within:border-[#2E7BF6]">
           <Search size={14} strokeWidth={2} />
           <input
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search"
-            className="w-full bg-transparent text-sm text-[#E6EDF3] placeholder:text-[#484F58] focus:outline-none"
+            className="w-full bg-transparent text-[13px] text-white placeholder:text-[#7E8CA0] focus:outline-none"
           />
         </div>
       </div>
 
-      <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-3">
+      <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-1">
         {filteredGroups.map((group) => {
           const isActiveGroup = groupContainsPath(group, pathname);
           const isOpen = isSearching || openGroup === group.label;
@@ -192,10 +200,8 @@ export default function Sidebar() {
               <button
                 type="button"
                 onClick={() => toggleGroup(group.label)}
-                className={`flex w-full items-center justify-between rounded-[5px] px-3 py-2 text-sm font-medium transition-colors duration-100 ${
-                  isActiveGroup
-                    ? "bg-[#1C2128] text-[#58A6FF]"
-                    : "text-[#C9D1D9] hover:bg-[#1C2128] hover:text-[#E6EDF3]"
+                className={`flex w-full items-center justify-between rounded-[4px] px-3 py-2 text-[13px] font-medium transition-colors duration-150 ${
+                  isActiveGroup ? "text-white" : "text-[#C4CDD9] hover:bg-[#26374F] hover:text-white"
                 }`}
               >
                 <span>{group.label}</span>
@@ -207,17 +213,17 @@ export default function Sidebar() {
               </button>
 
               {isOpen && (
-                <div className="mt-0.5 space-y-0.5 border-l border-[#21262D] pl-3">
+                <div className="mt-0.5 space-y-0.5 pl-1">
                   {group.items.map((item) => {
                     const active = pathname === item.href || pathname.startsWith(item.href + "/");
                     return (
                       <Link
                         key={item.href}
                         href={item.href}
-                        className={`block rounded-[5px] px-3 py-1.5 text-[13px] transition-colors duration-100 ${
+                        className={`block rounded-[4px] border-l-[3px] px-2.5 py-1.5 text-[13px] transition-colors duration-150 ${
                           active
-                            ? "bg-[#1C2128] font-semibold text-[#58A6FF]"
-                            : "text-[#8B949E] hover:bg-[#1C2128] hover:text-[#E6EDF3]"
+                            ? "border-[#2E7BF6] bg-[#26374F] font-medium text-white"
+                            : "border-transparent text-[#C4CDD9] hover:bg-[#26374F] hover:text-white"
                         }`}
                       >
                         {item.name}
@@ -230,17 +236,17 @@ export default function Sidebar() {
           );
         })}
         {isSearching && filteredGroups.length === 0 && (
-          <div className="px-3 py-2 text-xs text-[#484F58]">No matches</div>
+          <div className="px-3 py-2 text-xs text-[#7E8CA0]">No matches</div>
         )}
       </nav>
 
-      <div className="border-t border-[#21262D] px-3 py-3">
-        <div className="mb-2 truncate px-1 text-xs text-[#484F58]">
-          {username ? <>Signed in as <span className="text-[#8B949E]">{username}</span></> : " "}
+      <div className="border-t border-white/10 px-3 py-3">
+        <div className="mb-2 truncate px-1 text-xs text-[#7E8CA0]">
+          {username ? <>Signed in as <span className="text-[#C4CDD9]">{username}</span></> : " "}
         </div>
         <button
           onClick={logout}
-          className="flex w-full items-center gap-2.5 rounded-[5px] px-3 py-1.5 text-[13px] text-[#8B949E] transition-colors duration-100 hover:bg-[#1C2128] hover:text-[#E6EDF3]"
+          className="flex w-full items-center gap-2.5 rounded-[4px] px-3 py-1.5 text-[13px] text-[#C4CDD9] transition-colors duration-150 hover:bg-[#26374F] hover:text-white"
         >
           <LogOut size={14} strokeWidth={2} />
           Log out

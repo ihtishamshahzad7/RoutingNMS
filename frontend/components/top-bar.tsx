@@ -45,19 +45,16 @@ export function TopBar() {
   const utc = now.toUTCString();
 
   return (
-    <header className="flex h-10 shrink-0 items-center justify-between border-b border-border bg-bg-surface px-4">
+    <header className="flex h-10 shrink-0 items-center justify-between border-b border-[#DCE1E8] bg-white px-4">
       <div className="flex items-center gap-3">
-        <span className="text-sm font-bold tracking-tight text-text-primary">
-          Routing<span className="text-status-up">NMS</span>
-        </span>
-        <span className="dot dot-up" />
-        <span className="text-xs text-text-muted">All systems nominal</span>
-        <span className="mono text-text-ghost">{utc}</span>
+        <span className="h-1.5 w-1.5 rounded-full bg-[#1E8E5A]" />
+        <span className="text-xs text-[#5C6B7A]">All systems nominal</span>
+        <span className="font-mono text-xs text-[#8A96A3]">{utc}</span>
       </div>
       <div className="flex items-center gap-2">
-        <span className="label">Open alerts</span>
+        <span className="text-[11px] font-medium uppercase tracking-wide text-[#5C6B7A]">Open alerts</span>
         <AlertBadge count={openCount} />
-        <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-status-up animate-pulse" />
+        <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-[#1E8E5A] animate-pulse" />
       </div>
     </header>
   );

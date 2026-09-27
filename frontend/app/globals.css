@@ -67,14 +67,34 @@
 @layer base {
   * { box-sizing: border-box; }
   html, body { margin: 0; min-height: 100%; }
+  /*
+   * "Engineer Classic" typography/size directive (locked design direction,
+   * applies app-wide -- "fix this at the source, don't rely on zoom"):
+   * every rem-based Tailwind size (padding, gap, text-*, rounded-*, ...) is
+   * relative to the ROOT element's font-size, not body's. 81.25% of the
+   * browser default 16px is 13px, so 1rem now equals 13px and every
+   * rem-sized control (buttons, inputs, table rows, card padding) shrinks
+   * proportionally without touching each component individually -- the
+   * concrete target the user gave (100% zoom here == today's 80% zoom).
+   */
+  html { font-size: 81.25%; }
   body {
     background: var(--color-bg-page);
     color: var(--color-text-primary);
     font-family: var(--font-sans);
-    font-size: 12px;
+    font-size: 13px;
+    font-weight: 400;
     line-height: 1.5;
   }
   a { color: inherit; text-decoration: none; }
+  /*
+   * "Never 600 or 700 anywhere" -- the app's bold/semibold utility classes
+   * (font-bold/font-semibold, Tailwind 700/600) are the "too bold" problem
+   * named in the spec. Capping them here at the medium weight the spec
+   * allows (500, for headings/active-nav/button-labels) fixes every
+   * existing usage at the source instead of editing each occurrence.
+   */
+  .font-bold, .font-semibold { font-weight: 500 !important; }
 }
 
 @layer components {

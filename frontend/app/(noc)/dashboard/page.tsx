@@ -113,33 +113,33 @@ export default function DashboardPage() {
     <main className="mx-auto flex max-w-[1400px] gap-5 px-6 py-6">
       <div className="w-[360px] shrink-0">
         <div className="mb-3 flex items-center justify-between">
-          <h1 className="text-[15px] font-bold text-[#E6EDF3]">Monitors</h1>
+          <h1 className="text-[15px] font-bold text-[#1F2A37]">Monitors</h1>
           {uptime && (
-            <span className="text-[11px] text-[#8B949E]">
-              <span className="text-[#3FB950]">{uptime.up}</span> up · <span className="text-[#F78166]">{uptime.down}</span> down
+            <span className="text-[11px] text-[#5C6B7A]">
+              <span className="text-[#1E8E5A]">{uptime.up}</span> up · <span className="text-[#C4362D]">{uptime.down}</span> down
               {uptime.warning ? (
                 <>
                   {" "}
-                  · <span className="text-[#D29922]">{uptime.warning}</span> warn
+                  · <span className="text-[#C77700]">{uptime.warning}</span> warn
                 </>
               ) : null}
             </span>
           )}
         </div>
         {loading ? (
-          <div className="px-3 py-6 text-center text-xs text-[#8B949E]">Loading monitors…</div>
+          <div className="px-3 py-6 text-center text-xs text-[#5C6B7A]">Loading monitors…</div>
         ) : (
           <MonitorList monitors={monitors} selectedId={selectedId} onSelect={setSelectedId} />
         )}
       </div>
 
-      <div className="min-w-0 flex-1 rounded-[8px] border border-[#21262D] bg-[#161B22] p-5">
+      <div className="min-w-0 flex-1 rounded-[4px] border border-[#DCE1E8] bg-[#FFFFFF] p-5">
         {selected ? (
           <div>
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-[16px] font-bold text-[#E6EDF3]">{selected.name}</div>
-                <div className="mt-0.5 text-[12px] text-[#8B949E]">{selected.address}</div>
+                <div className="text-[16px] font-bold text-[#1F2A37]">{selected.name}</div>
+                <div className="mt-0.5 text-[12px] text-[#5C6B7A]">{selected.address}</div>
               </div>
               <StatusPill
                 status={selectedUptime?.status ?? "unknown"}
@@ -147,16 +147,16 @@ export default function DashboardPage() {
                 pulse
               />
             </div>
-            <div className="mt-4 text-[12px] text-[#8B949E]">
-              Uptime (24h): <span className="font-mono text-[#E6EDF3]">{selectedUptime?.uptime24h != null ? `${selectedUptime.uptime24h.toFixed(2)}%` : "—"}</span>
+            <div className="mt-4 text-[12px] text-[#5C6B7A]">
+              Uptime (24h): <span className="font-mono text-[#1F2A37]">{selectedUptime?.uptime24h != null ? `${selectedUptime.uptime24h.toFixed(2)}%` : "—"}</span>
             </div>
-            <p className="mt-6 text-xs text-[#484F58]">
+            <p className="mt-6 text-xs text-[#8A96A3]">
               Full monitor detail (response-time chart, 24h/30d/1y uptime, event log) lands with item 3 of the Kuma
               parity freeze — not built yet.
             </p>
           </div>
         ) : (
-          <div className="flex h-full items-center justify-center text-xs text-[#8B949E]">Select a monitor</div>
+          <div className="flex h-full items-center justify-center text-xs text-[#5C6B7A]">Select a monitor</div>
         )}
       </div>
     </main>

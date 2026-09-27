@@ -12,9 +12,9 @@ export type Beat = { reachable: boolean; lossPct?: number; probedAt?: string };
 const MAX_BEATS = 50;
 
 function beatColor(b: Beat): string {
-  if (!b.reachable) return "#F78166"; // down
-  if ((b.lossPct ?? 0) > 0) return "#D29922"; // degraded/loss, still reachable
-  return "#3FB950"; // up
+  if (!b.reachable) return "#C4362D"; // down
+  if ((b.lossPct ?? 0) > 0) return "#C77700"; // degraded/loss, still reachable
+  return "#1E8E5A"; // up
 }
 
 export function HeartbeatBar({ beats, height = 28 }: { beats: Beat[]; height?: number }) {
@@ -28,7 +28,7 @@ export function HeartbeatBar({ beats, height = 28 }: { beats: Beat[]; height?: n
   return (
     <div className="flex items-end gap-[2px]" style={{ height }} title={`${trimmed.length} of last ${MAX_BEATS} checks`}>
       {Array.from({ length: padding }).map((_, i) => (
-        <span key={`pad-${i}`} className="w-[3px] shrink-0 rounded-[1px] bg-[#21262D]" style={{ height: "100%" }} />
+        <span key={`pad-${i}`} className="w-[3px] shrink-0 rounded-[1px] bg-[#DCE1E8]" style={{ height: "100%" }} />
       ))}
       {trimmed.map((b, i) => (
         <span
