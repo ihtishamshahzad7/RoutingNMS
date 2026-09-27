@@ -1,13 +1,17 @@
 "use client";
 
 // Connectivity Monitoring detail (6-page rebuild, item 2, extended by
-// 2.2): ICMP up/down + latency history, and -- when configured on this
-// device -- Port/Service check status + response-time history alongside
-// it, sharing the same 1h/24h/7d range selector. Backed by
-// GET /api/v1/ping/{id}/history-range and the new
-// GET /api/v1/port-check/{id}/history-range (backend/internal/portcheck/
-// api.go, reading the port_check_up/port_check_latency_ms samples the
-// Poller already writes to metricsdb).
+// 2.2, 2.3): ICMP up/down + latency history, and -- when configured on
+// this device -- Port/Service check status + response-time history
+// alongside it, sharing the same 1h/24h/7d range selector. Backed by
+// GET /api/v1/ping/{id}/history-range and
+// GET /api/v1/port-check/{id}/history-range.
+//
+// 2.3: raw-probe scatter graphing replaced with aggregation via
+// lib/monitoring-aggregate.ts -- 24h buckets into one point per hour,
+// 7d buckets into one point per day (average latency + uptime % per
+// bucket), 1h stays raw/near-raw. Applied identically to the ICMP chart
+// and the Port/Service chart.
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
@@ -17,6 +21,7 @@ import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianG
 import { apiFetch, ApiError } from "../../../../lib/api";
 import { EngPanel } from "../../../../components/ui/engineer";
 import { HeartbeatBar, type Beat } from "../../dashboard/HeartbeatBar";
+import { aggregate, type RawPoint } from "../../../../lib/monitoring-aggregate";
 
 const ORG = "tenant-1";
 type Device = {
@@ -34,7 +39,9 @@ const RANGES: { key: Range; label: string }[] = [
   { key: "7d", label: "7d" },
 ];
 
-function LatencyChart({ data, unit = "ms" }: { data: { t: number; rtt: number | null }[]; unit?: string }) {
+type ChartPoint = { t: number; rtt: number | null; uptimePct: number };
+
+function LatencyChart({ data, unit = "ms" }: { data: ChartPoint[]; unit?: string }) {
   return (
     <ResponsiveContainer width="100%" height={220}>
       <LineChart data={data}>
@@ -51,7 +58,14 @@ function LatencyChart({ data, unit = "ms" }: { data: { t: number; rtt: number | 
         <Tooltip
           contentStyle={{ background: "#FFFFFF", border: "1px solid #DCE1E8", borderRadius: 4, fontSize: 12 }}
           labelFormatter={(t) => new Date(t as number).toLocaleString()}
-          formatter={(v) => [v == null ? "timeout" : `${v} ${unit}`, "Latency"]}
+          formatter={(v, name, item) => {
+            if (name === "rtt") {
+              const uptime = (item?.payload as ChartPoint | undefined)?.uptimePct;
+              const uptimeSuffix = uptime != null ? ` · ${uptime.toFixed(1)}% up` : "";
+              return [v == null ? `timeout${uptimeSuffix}` : `${v} ${unit}${uptimeSuffix}`, "Latency"];
+            }
+            return [v, name];
+          }}
         />
         <Line type="monotone" dataKey="rtt" stroke="#2E7BF6" strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls={false} />
       </LineChart>
@@ -102,26 +116,44 @@ export default function ConnectivityMonitoringDetailPage() {
     return () => { active = false; };
   }, [id, range, device?.portCheckEnabled]);
 
-  const chartData = useMemo(
-    () => history.map((p) => ({ t: new Date(p.probedAt).getTime(), rtt: p.rttMs ?? null })),
-    [history]
+  const aggregatedIcmp = useMemo(() => {
+    const raw: RawPoint[] = history.map((p) => ({
+      t: new Date(p.probedAt).getTime(),
+      latencyMs: p.rttMs ?? null,
+      reachable: p.isReachable,
+    }));
+    return aggregate(raw, range);
+  }, [history, range]);
+
+  const chartData: ChartPoint[] = useMemo(
+    () => aggregatedIcmp.map((p) => ({ t: p.t, rtt: p.avgLatencyMs, uptimePct: p.uptimePct })),
+    [aggregatedIcmp]
   );
   const beats: Beat[] = useMemo(
-    () => history.map((p) => ({ reachable: p.isReachable, lossPct: p.lossPct, probedAt: p.probedAt })),
-    [history]
+    () => aggregatedIcmp.map((p) => ({ reachable: p.reachable, lossPct: 100 - p.uptimePct, probedAt: new Date(p.t).toISOString() })),
+    [aggregatedIcmp]
   );
   const uptimePct = useMemo(() => {
     if (!history.length) return null;
     return (history.filter((p) => p.isReachable).length / history.length) * 100;
   }, [history]);
 
-  const portChartData = useMemo(
-    () => portHistory.map((p) => ({ t: new Date(p.probedAt).getTime(), rtt: p.latencyMs ?? null })),
-    [portHistory]
+  const aggregatedPort = useMemo(() => {
+    const raw: RawPoint[] = portHistory.map((p) => ({
+      t: new Date(p.probedAt).getTime(),
+      latencyMs: p.latencyMs ?? null,
+      reachable: p.isReachable,
+    }));
+    return aggregate(raw, range);
+  }, [portHistory, range]);
+
+  const portChartData: ChartPoint[] = useMemo(
+    () => aggregatedPort.map((p) => ({ t: p.t, rtt: p.avgLatencyMs, uptimePct: p.uptimePct })),
+    [aggregatedPort]
   );
   const portBeats: Beat[] = useMemo(
-    () => portHistory.map((p) => ({ reachable: p.isReachable, probedAt: p.probedAt })),
-    [portHistory]
+    () => aggregatedPort.map((p) => ({ reachable: p.reachable, lossPct: 100 - p.uptimePct, probedAt: new Date(p.t).toISOString() })),
+    [aggregatedPort]
   );
   const portUptimePct = useMemo(() => {
     if (!portHistory.length) return null;
@@ -162,7 +194,7 @@ export default function ConnectivityMonitoringDetailPage() {
         </div>
       </div>
 
-      <EngPanel title="ICMP · Latency (RTT ms)">
+      <EngPanel title={`ICMP · Latency (RTT ms)${range === "1h" ? "" : range === "24h" ? " · hourly avg" : " · daily avg"}`}>
         {loading ? (
           <div className="py-16 text-center text-[13px] text-[#8A96A3]">Loading…</div>
         ) : error ? (
@@ -201,7 +233,7 @@ export default function ConnectivityMonitoringDetailPage() {
             )}
           </div>
 
-          <EngPanel title={`Response time (${device.portCheckProtocol === "tcp" ? "connect ms" : "ms"})`}>
+          <EngPanel title={`Response time (${device.portCheckProtocol === "tcp" ? "connect ms" : "ms"})${range === "1h" ? "" : range === "24h" ? " · hourly avg" : " · daily avg"}`}>
             {portLoading ? (
               <div className="py-16 text-center text-[13px] text-[#8A96A3]">Loading…</div>
             ) : portError ? (
