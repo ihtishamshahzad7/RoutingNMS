@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/devices"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/metricsdb"
 )
 
 // API exposes Port/Service-check live status and on-demand checks for the
@@ -14,6 +15,7 @@ import (
 type API struct {
 	Devices devices.Repository
 	Poller  *Poller
+	Metrics metricsdb.Repository
 }
 
 // Live serves GET /api/v1/port-check/{id}/live.
@@ -96,6 +98,62 @@ func (a API) Summary(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"devices": out})
+}
+
+// HistoryRangePoint is one Port/Service check sample -- shaped like ping's
+// ProbeResult (probedAt/latencyMs/reachable) so the device-detail chart
+// (item 2.2) can reuse the same rendering code as the ICMP graph.
+type HistoryRangePoint struct {
+	ProbedAt  time.Time `json:"probedAt"`
+	LatencyMS *float64  `json:"latencyMs,omitempty"`
+	Reachable bool      `json:"isReachable"`
+}
+
+// HistoryRange serves GET /api/v1/port-check/{id}/history-range?range=
+// 1h|24h|7d -- reads the port_check_up/port_check_latency_ms samples the
+// Poller already writes to metricsdb (RecordBatch in poller.go) over the
+// requested window. The two metrics are recorded together, once per poll,
+// so they line up index-for-index; this zips them back into one series.
+func (a API) HistoryRange(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r.URL.Path, "history-range")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	var window time.Duration
+	switch r.URL.Query().Get("range") {
+	case "1h":
+		window = time.Hour
+	case "7d":
+		window = 7 * 24 * time.Hour
+	default:
+		window = 24 * time.Hour
+	}
+	series, err := a.Metrics.Query(r.Context(), "device", id, []string{"port_check_up", "port_check_latency_ms"}, window)
+	if err != nil {
+		http.Error(w, "failed to load port-check history", 500)
+		return
+	}
+	var upSeries, latSeries metricsdb.Series
+	for _, s := range series {
+		switch s.Metric {
+		case "port_check_up":
+			upSeries = s
+		case "port_check_latency_ms":
+			latSeries = s
+		}
+	}
+	out := make([]HistoryRangePoint, 0, len(upSeries.Points))
+	for i, p := range upSeries.Points {
+		point := HistoryRangePoint{ProbedAt: p.Timestamp, Reachable: p.Value != 0}
+		if i < len(latSeries.Points) {
+			lat := latSeries.Points[i].Value
+			point.LatencyMS = &lat
+		}
+		out = append(out, point)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"history": out})
 }
 
 func pathID(path, suffix string) (string, bool) {

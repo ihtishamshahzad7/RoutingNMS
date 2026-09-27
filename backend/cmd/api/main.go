@@ -504,14 +504,17 @@ func main() {
 			}
 			http.NotFound(w, r)
 		})))
-		portCheckAPI := portcheck.API{Devices: devicesRepo, Poller: portCheckPoller}
+		portCheckAPI := portcheck.API{Devices: devicesRepo, Poller: portCheckPoller, Metrics: metricsdb.Repository{DB: db}}
 		mux.Handle("GET /api/v1/port-check/summary", authHandler.Middleware(http.HandlerFunc(portCheckAPI.Summary)))
 		mux.Handle("GET /api/v1/port-check/", authHandler.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if strings.HasSuffix(r.URL.Path, "/live") {
+			switch {
+			case strings.HasSuffix(r.URL.Path, "/history-range"):
+				portCheckAPI.HistoryRange(w, r)
+			case strings.HasSuffix(r.URL.Path, "/live"):
 				portCheckAPI.Live(w, r)
-				return
+			default:
+				http.NotFound(w, r)
 			}
-			http.NotFound(w, r)
 		})))
 		mux.Handle("POST /api/v1/port-check/", authHandler.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if strings.HasSuffix(r.URL.Path, "/check") {

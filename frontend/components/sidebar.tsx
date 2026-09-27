@@ -53,7 +53,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
       { name: "Devices", href: "/devices", icon: Server },
-      { name: "ICMP Monitoring", href: "/icmp-monitoring", icon: Activity },
+      { name: "Connectivity Monitoring", href: "/icmp-monitoring", icon: Activity },
       { name: "SNMP & Syslog Monitoring", href: "/snmp-syslog-monitoring", icon: Cpu },
       { name: "Reachability", href: "/reachability", icon: Radar },
     ],
