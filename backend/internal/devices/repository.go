@@ -235,8 +235,20 @@ func (r Repository) Create(ctx context.Context, in DeviceInput) (Record, error) 
 	if in.Timeout <= 0 {
 		in.Timeout = 3 * time.Second
 	}
+	// icmpInterval mirrors icmp_interval_seconds' own migration default (30s,
+	// backend/migrations/0013_devices_ping.sql) when the Add Device popup's
+	// interval field is left blank/zero.
+	icmpInterval := in.ICMPIntervalSeconds
+	if icmpInterval <= 0 {
+		icmpInterval = 30
+	}
+	// snmpEnabled is now the popup's explicit SNMP toggle, not an implicit
+	// "version was set" check -- a device can have SNMP credentials on file
+	// but the toggle off, matching the Kuma-style "enable this check" UX
+	// used for HTTP/ICMP.
+	snmpEnabled := in.SNMPEnabled && in.SNMP.Version != ""
 	var out Record
-	err := r.DB.QueryRow(ctx, `INSERT INTO devices (organization_id,name,address,device_type,vendor,serial_number,enabled,snmp_enabled,snmp_version,snmp_community,snmp_username,snmp_auth_protocol,snmp_auth_password,snmp_priv_protocol,snmp_priv_password,snmp_port,snmp_timeout_ms) VALUES ($1,$2,$3,$4,$5,$6,true,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id,organization_id,name,address,device_type,COALESCE(vendor,''),COALESCE(model,''),COALESCE(serial_number,''),enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port`, in.OrganizationID, in.Name, in.Address, in.DeviceType, in.Vendor, in.SerialNumber, in.SNMP.Version != "", in.SNMP.Version, in.SNMP.Community, in.SNMP.Username, in.SNMP.AuthProto, in.SNMP.AuthPass, in.SNMP.PrivProto, in.SNMP.PrivPass, in.SNMPPort, int(in.Timeout/time.Millisecond)).Scan(&out.ID, &out.OrganizationID, &out.Name, &out.Address, &out.DeviceType, &out.Vendor, &out.Model, &out.SerialNumber, &out.Enabled, &out.MonitoringIntervalSeconds, &out.SNMPEnabled, &out.SNMPVersion, &out.SNMPPort)
+	err := r.DB.QueryRow(ctx, `INSERT INTO devices (organization_id,name,address,device_type,vendor,serial_number,enabled,snmp_enabled,snmp_version,snmp_community,snmp_username,snmp_auth_protocol,snmp_auth_password,snmp_priv_protocol,snmp_priv_password,snmp_port,snmp_timeout_ms,icmp_enabled,icmp_interval_seconds) VALUES ($1,$2,$3,$4,$5,$6,true,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id,organization_id,name,address,device_type,COALESCE(vendor,''),COALESCE(model,''),COALESCE(serial_number,''),enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port`, in.OrganizationID, in.Name, in.Address, in.DeviceType, in.Vendor, in.SerialNumber, snmpEnabled, in.SNMP.Version, in.SNMP.Community, in.SNMP.Username, in.SNMP.AuthProto, in.SNMP.AuthPass, in.SNMP.PrivProto, in.SNMP.PrivPass, in.SNMPPort, int(in.Timeout/time.Millisecond), in.ICMPEnabled, icmpInterval).Scan(&out.ID, &out.OrganizationID, &out.Name, &out.Address, &out.DeviceType, &out.Vendor, &out.Model, &out.SerialNumber, &out.Enabled, &out.MonitoringIntervalSeconds, &out.SNMPEnabled, &out.SNMPVersion, &out.SNMPPort)
 	out.SNMPConfigured = out.SNMPEnabled
 	return out, err
 }

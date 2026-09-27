@@ -18,8 +18,16 @@ type DeviceInput struct {
 	Vendor string
 	SerialNumber string
 	SNMP snmp.Credentials
+	SNMPEnabled bool
 	SNMPPort uint16
 	Timeout time.Duration
+	// ICMPEnabled/ICMPIntervalSeconds mirror the "Add Device" popup's ICMP
+	// toggle+interval fields (checklist item 1) -- set at registration time
+	// so a new device starts being pinged on the very next poller cycle
+	// (backend/internal/ping/poller.go's ListIcmpEnabled), no separate
+	// UpdateICMPCheck call required.
+	ICMPEnabled bool
+	ICMPIntervalSeconds int
 }
 
 type TestResult struct {
