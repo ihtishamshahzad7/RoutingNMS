@@ -3,6 +3,7 @@ package devices
 import (
 	"context"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/httpcheck"
@@ -59,7 +60,24 @@ func sampleOnce(ctx context.Context, repo Repository, metrics metricsdb.Reposito
 		// "SNMP down" and "HTTP up" (or vice versa) at the same time.
 		if d.HTTPCheckEnabled && d.HTTPURL != "" {
 			httpCtx, httpCancel := context.WithTimeout(ctx, time.Duration(d.HTTPTimeoutMS)*time.Millisecond+time.Second)
-			result := httpcheck.Check(httpCtx, d.HTTPURL, d.HTTPExpectedStatus, d.HTTPKeyword, time.Duration(d.HTTPTimeoutMS)*time.Millisecond)
+			var acceptedCodes []string
+			for _, c := range strings.Split(d.HTTPAcceptedStatusCodes, ",") {
+				if c = strings.TrimSpace(c); c != "" {
+					acceptedCodes = append(acceptedCodes, c)
+				}
+			}
+			result := httpcheck.Check(httpCtx, d.HTTPURL, httpcheck.Options{
+				Method:              d.HTTPMethod,
+				Headers:             d.HTTPHeaders,
+				Body:                d.HTTPBody,
+				BodyEncoding:        d.HTTPBodyEncoding,
+				AcceptedStatusCodes: acceptedCodes,
+				MaxRedirects:        d.HTTPMaxRedirects,
+				IgnoreTLS:           d.HTTPIgnoreTLS,
+				ExpectedStatus:      d.HTTPExpectedStatus,
+				Keyword:             d.HTTPKeyword,
+				Timeout:             time.Duration(d.HTTPTimeoutMS) * time.Millisecond,
+			})
 			httpCancel()
 			httpUp := 0.0
 			if result.Reachable {
