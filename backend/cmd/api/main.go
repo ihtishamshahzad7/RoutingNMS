@@ -155,20 +155,29 @@ func main() {
 		go pruneSessionsPeriodically(ctx, authStore)
 
 		// Syslog receiver: OLTs/routers/switches/CMTS can be pointed at this
-		// NMS as a syslog target. Defaults to :1514 (no elevated privileges
-		// needed); set SYSLOG_ADDR=":514" and grant the service
-		// CAP_NET_BIND_SERVICE (see routingnms-api.service) to use the
-		// standard port instead.
+		// NMS as a syslog target. Defaults to the standard port :514 --
+		// routingnms-api.service grants CAP_NET_BIND_SERVICE unconditionally
+		// so the service can bind it without running as root; set
+		// SYSLOG_PORT (or the full SYSLOG_ADDR) to change it, e.g. to a
+		// non-privileged port for a non-systemd/dev setup.
 		syslogAddr := os.Getenv("SYSLOG_ADDR")
 		if syslogAddr == "" {
-			syslogAddr = ":1514"
+			syslogAddr = ":" + strconv.Itoa(envInt("SYSLOG_PORT", 514))
+		}
+		syslogCfg := syslog.Config{
+			QueueSize:          envInt("SYSLOG_QUEUE_SIZE", 5000),
+			QueueWorkers:       envInt("SYSLOG_QUEUE_WORKERS", 4),
+			RatePerSecond:      float64(envInt("SYSLOG_RATE_LIMIT_PER_SEC", 50)),
+			RateBurst:          float64(envInt("SYSLOG_RATE_BURST", 200)),
+			DeviceCacheRefresh: time.Duration(envInt("SYSLOG_DEVICE_CACHE_REFRESH_SECONDS", 30)) * time.Second,
 		}
 		go func() {
-			if err := syslog.ListenAndServe(ctx, db, syslogAddr); err != nil {
+			if err := syslog.ListenAndServe(ctx, db, syslogAddr, syslogCfg); err != nil {
 				log.Printf("syslog receiver failed to start on %s: %v", syslogAddr, err)
 			}
 		}()
-		go pruneSyslogPeriodically(ctx, db)
+		syslogRetentionDays := envInt("SYSLOG_RETENTION_DAYS", 14)
+		go pruneSyslogPeriodically(ctx, db, syslogRetentionDays)
 
 		// SNMP trap listener: OLTs/routers/switches/UPS controllers etc. can
 		// send v1/v2c/v3 traps here; matched against trap_rules for
@@ -920,10 +929,21 @@ func pruneSessionsPeriodically(ctx context.Context, store auth.Store) {
 		}
 	}
 }
-func pruneSyslogPeriodically(ctx context.Context, db *pgxpool.Pool) {
+func pruneSyslogPeriodically(ctx context.Context, db *pgxpool.Pool, retentionDays int) {
 	ticker := time.NewTicker(6 * time.Hour)
 	defer ticker.Stop()
-	const retention = 14 * 24 * time.Hour
+	if retentionDays < 1 {
+		retentionDays = 14
+	}
+	retention := time.Duration(retentionDays) * 24 * time.Hour
+	// Run once immediately (matching this codebase's other periodic jobs)
+	// rather than waiting a full 6h after every restart before the first
+	// sweep.
+	if n, err := syslog.PruneOlderThan(ctx, db, retention); err != nil {
+		log.Printf("prune syslog messages: %v", err)
+	} else if n > 0 {
+		log.Printf("pruned %d syslog messages older than %s", n, retention)
+	}
 	for {
 		select {
 		case <-ctx.Done():
