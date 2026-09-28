@@ -11,7 +11,8 @@ import (
 type WalkFunc func(ctx context.Context, collector snmp.Collector, target snmp.Target) ([]PortState, error)
 
 // walkInterfaces polls IF-MIB for every interface on target: ifDescr,
-// ifAdminStatus, ifOperStatus, ifSpeed, plus in/out octet counters.
+// ifAdminStatus, ifOperStatus, speed (ifHighSpeed preferred, ifSpeed
+// fallback), plus in/out octet counters.
 //
 // Octet counters prefer the 64-bit ifXTable HC counters (ifHCInOctets/
 // ifHCOutOctets); when a walk of those OIDs returns nothing at all --
@@ -49,10 +50,22 @@ func walkInterfaces(ctx context.Context, collector snmp.Collector, target snmp.T
 	if err := walkOID(client, snmp.IfOperStatusOID, func(idx int64, v any) { get(idx).OperUp = uint64Value(v) == 1 }); err != nil {
 		return nil, fmt.Errorf("walk ifOperStatus: %w", err)
 	}
-	// ifSpeed is best-effort: some virtual/tunnel interfaces don't report
-	// it meaningfully, but a failed walk here shouldn't abort the whole
-	// poll (state/status matter more than the speed label).
+	// Speed is best-effort: some virtual/tunnel interfaces don't report it
+	// meaningfully, but a failed walk here shouldn't abort the whole poll
+	// (state/status matter more than the speed label). Prefer ifHighSpeed
+	// (ifXTable, reported in Mbps) over the 32-bit ifSpeed -- ifSpeed caps
+	// out/misreports on links at or above ~4.295 Gbps (RFC 2863 says
+	// ifSpeed should report the max uint32 value in that case, which
+	// ifHighSpeed exists specifically to fix), so any device that answers
+	// it gives us the accurate figure. Fall back to ifSpeed only when a
+	// port's ifHighSpeed is missing or reported as zero.
 	_ = walkOID(client, snmp.IfSpeedOID, func(idx int64, v any) { get(idx).SpeedBps = uint64Value(v) })
+	_ = walkOID(client, snmp.IfHighSpeedOID, func(idx int64, v any) {
+		mbps := uint64Value(v)
+		if mbps > 0 {
+			get(idx).SpeedBps = mbps * 1_000_000
+		}
+	})
 
 	hcIn := map[int64]uint64{}
 	_ = walkOID(client, snmp.IfHCInOctetsOID, func(idx int64, v any) { hcIn[idx] = uint64Value(v) })

@@ -20,5 +20,6 @@ const (
 	IfOutErrorsOID   = "1.3.6.1.2.1.2.2.1.20"
 	IfInDiscardsOID  = "1.3.6.1.2.1.2.2.1.13"
 	IfOutDiscardsOID = "1.3.6.1.2.1.2.2.1.19"
-	IfSpeedOID       = "1.3.6.1.2.1.2.2.1.5" // ifSpeed (bps, 32-bit per RFC 2863 -- fine for our purposes, we only display/store it)
+	IfSpeedOID       = "1.3.6.1.2.1.2.2.1.5" // ifSpeed (bps, 32-bit per RFC 2863 -- kept as the fallback when ifHighSpeed is unavailable)
+	IfHighSpeedOID   = "1.3.6.1.2.1.31.1.1.1.15" // ifHighSpeed (Mbps, ifXTable -- doesn't wrap on multi-gig links the way 32-bit ifSpeed does)
 )
