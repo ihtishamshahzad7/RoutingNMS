@@ -1,24 +1,29 @@
 "use client";
 
 // Connectivity Monitoring detail (6-page rebuild, item 2, extended by
-// 2.2, 2.3): ICMP up/down + latency history, and -- when configured on
-// this device -- Port/Service check status + response-time history
-// alongside it, sharing the same 1h/24h/7d range selector. Backed by
-// GET /api/v1/ping/{id}/history-range and
-// GET /api/v1/port-check/{id}/history-range.
+// 2.2, 2.3, 2.4, 2.5): ICMP up/down + latency history, and -- when
+// configured on this device -- Port/Service check status + response-time
+// history alongside it, sharing the same 1h/24h/7d range selector, plus a
+// Download Report PDF button. Backed by GET /api/v1/ping/{id}/history-range
+// and GET /api/v1/port-check/{id}/history-range.
 //
 // 2.3: raw-probe scatter graphing replaced with aggregation via
 // lib/monitoring-aggregate.ts -- 24h buckets into one point per hour,
 // 7d buckets into one point per day (average latency + uptime % per
 // bucket), 1h stays raw/near-raw. Applied identically to the ICMP chart
 // and the Port/Service chart.
+//
+// 2.5: UI polish -- chart skeletons while loading instead of "Loading…"
+// text, an inline error + Retry button instead of a blank chart on fetch
+// failure, and empty-state copy that distinguishes "this device has no
+// history at all yet" (1h view) from "nothing in this particular range"
+// (24h/7d), per the user's specified wording for the former.
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Activity, Plug } from "lucide-react";
+import { ArrowLeft, Activity, Plug, Download, RotateCw } from "lucide-react";
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
-import { Download } from "lucide-react";
 import { apiFetch, ApiError } from "../../../../lib/api";
 import { EngPanel, EngButton, EngModal, EngField, EngInput } from "../../../../components/ui/engineer";
 import { HeartbeatBar, type Beat } from "../../dashboard/HeartbeatBar";
@@ -53,12 +58,22 @@ function LatencyChart({ data, unit = "ms" }: { data: ChartPoint[]; unit?: string
           type="number"
           domain={["dataMin", "dataMax"]}
           tickFormatter={(t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-          stroke="#8A96A3"
-          fontSize={11}
+          stroke="#5C6B7A"
+          tick={{ fontSize: 11, fontWeight: 400, fill: "#5C6B7A" }}
+          tickLine={{ stroke: "#DCE1E8" }}
+          axisLine={{ stroke: "#DCE1E8" }}
         />
-        <YAxis stroke="#8A96A3" fontSize={11} width={40} />
+        <YAxis
+          stroke="#5C6B7A"
+          tick={{ fontSize: 11, fontWeight: 400, fill: "#5C6B7A" }}
+          tickLine={{ stroke: "#DCE1E8" }}
+          axisLine={{ stroke: "#DCE1E8" }}
+          width={40}
+        />
         <Tooltip
-          contentStyle={{ background: "#FFFFFF", border: "1px solid #DCE1E8", borderRadius: 4, fontSize: 12 }}
+          contentStyle={{ background: "#FFFFFF", border: "1px solid #DCE1E8", borderRadius: 4, fontSize: 12, fontFamily: "inherit" }}
+          labelStyle={{ color: "#1F2A37", fontWeight: 500 }}
+          itemStyle={{ color: "#1F2A37" }}
           labelFormatter={(t) => new Date(t as number).toLocaleString()}
           formatter={(v, name, item) => {
             if (name === "rtt") {
@@ -72,6 +87,51 @@ function LatencyChart({ data, unit = "ms" }: { data: ChartPoint[]; unit?: string
         <Line type="monotone" dataKey="rtt" stroke="#2E7BF6" strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls={false} />
       </LineChart>
     </ResponsiveContainer>
+  );
+}
+
+/** Animated placeholder shaped like the chart it stands in for, so the
+ * layout doesn't jump once data arrives (item 2.5: "skeleton placeholders,
+ * not blank space or spinners alone"). */
+function ChartSkeleton() {
+  return (
+    <div className="flex h-[220px] animate-pulse items-end gap-1 px-2 pb-4">
+      {[38, 62, 45, 70, 52, 80, 58, 40, 66, 48, 72, 55, 44, 68, 50].map((h, i) => (
+        <div key={i} className="flex-1 rounded-t-[2px] bg-[#EEF1F4]" style={{ height: `${h}%` }} />
+      ))}
+    </div>
+  );
+}
+
+function HeartbeatSkeleton() {
+  return (
+    <div className="flex animate-pulse items-end gap-[2px] py-1" style={{ height: 28 }}>
+      {Array.from({ length: 50 }).map((_, i) => (
+        <span key={i} className="w-[3px] shrink-0 rounded-[1px] bg-[#EEF1F4]" style={{ height: "100%" }} />
+      ))}
+    </div>
+  );
+}
+
+function ErrorBlock({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-2 py-12 text-center">
+      <span className="text-[13px] text-[#C4362D]">{message}</span>
+      <button
+        onClick={onRetry}
+        className="inline-flex items-center gap-1.5 rounded-[4px] border border-[#DCE1E8] bg-white px-3 py-1.5 text-[12px] font-medium text-[#1F2A37] hover:bg-[#F4F6F9]"
+      >
+        <RotateCw size={12} /> Retry
+      </button>
+    </div>
+  );
+}
+
+function EmptyBlock({ range }: { range: Range }) {
+  return (
+    <div className="py-16 text-center text-[13px] text-[#8A96A3]">
+      {range === "1h" ? "No data yet — first results appear within one check interval." : "No data in this range — try a shorter range, or check back later."}
+    </div>
   );
 }
 
@@ -127,7 +187,7 @@ export default function ConnectivityMonitoringDetailPage() {
     return () => { active = false; };
   }, [id]);
 
-  useEffect(() => {
+  const loadIcmp = useCallback(() => {
     let active = true;
     setLoading(true);
     apiFetch<{ history: ProbeResult[] }>(`/ping/${id}/history-range?range=${range}`)
@@ -137,8 +197,10 @@ export default function ConnectivityMonitoringDetailPage() {
     return () => { active = false; };
   }, [id, range]);
 
-  useEffect(() => {
-    if (!device?.portCheckEnabled) { setPortHistory([]); setPortLoading(false); return; }
+  useEffect(() => loadIcmp(), [loadIcmp]);
+
+  const loadPort = useCallback(() => {
+    if (!device?.portCheckEnabled) { setPortHistory([]); setPortLoading(false); return () => {}; }
     let active = true;
     setPortLoading(true);
     apiFetch<{ history: PortHistoryPoint[] }>(`/port-check/${id}/history-range?range=${range}`)
@@ -147,6 +209,8 @@ export default function ConnectivityMonitoringDetailPage() {
       .finally(() => { if (active) setPortLoading(false); });
     return () => { active = false; };
   }, [id, range, device?.portCheckEnabled]);
+
+  useEffect(() => loadPort(), [loadPort]);
 
   const aggregatedIcmp = useMemo(() => {
     const raw: RawPoint[] = history.map((p) => ({
@@ -264,19 +328,23 @@ export default function ConnectivityMonitoringDetailPage() {
 
       <EngPanel title={`ICMP · Latency (RTT ms)${range === "1h" ? "" : range === "24h" ? " · hourly avg" : " · daily avg"}`}>
         {loading ? (
-          <div className="py-16 text-center text-[13px] text-[#8A96A3]">Loading…</div>
+          <ChartSkeleton />
         ) : error ? (
-          <div className="py-16 text-center text-[13px] text-[#C4362D]">{error}</div>
+          <ErrorBlock message={error} onRetry={loadIcmp} />
         ) : chartData.length === 0 ? (
-          <div className="py-16 text-center text-[13px] text-[#8A96A3]">No data yet — check back in a few minutes.</div>
+          <EmptyBlock range={range} />
         ) : (
           <LatencyChart data={chartData} />
         )}
       </EngPanel>
 
       <EngPanel title="ICMP · Up / down" className="mt-4">
-        {beats.length === 0 ? (
-          <div className="py-6 text-center text-[13px] text-[#8A96A3]">No data yet — check back in a few minutes.</div>
+        {loading ? (
+          <HeartbeatSkeleton />
+        ) : error ? (
+          <ErrorBlock message={error} onRetry={loadIcmp} />
+        ) : beats.length === 0 ? (
+          <EmptyBlock range={range} />
         ) : (
           <div className="overflow-x-auto py-1">
             <HeartbeatBar beats={beats} height={28} />
@@ -303,19 +371,23 @@ export default function ConnectivityMonitoringDetailPage() {
 
           <EngPanel title={`Response time (${device.portCheckProtocol === "tcp" ? "connect ms" : "ms"})${range === "1h" ? "" : range === "24h" ? " · hourly avg" : " · daily avg"}`}>
             {portLoading ? (
-              <div className="py-16 text-center text-[13px] text-[#8A96A3]">Loading…</div>
+              <ChartSkeleton />
             ) : portError ? (
-              <div className="py-16 text-center text-[13px] text-[#C4362D]">{portError}</div>
+              <ErrorBlock message={portError} onRetry={loadPort} />
             ) : portChartData.length === 0 ? (
-              <div className="py-16 text-center text-[13px] text-[#8A96A3]">No data yet — check back in a few minutes.</div>
+              <EmptyBlock range={range} />
             ) : (
               <LatencyChart data={portChartData} />
             )}
           </EngPanel>
 
           <EngPanel title="Port/Service · Up / down" className="mt-4">
-            {portBeats.length === 0 ? (
-              <div className="py-6 text-center text-[13px] text-[#8A96A3]">No data yet — check back in a few minutes.</div>
+            {portLoading ? (
+              <HeartbeatSkeleton />
+            ) : portError ? (
+              <ErrorBlock message={portError} onRetry={loadPort} />
+            ) : portBeats.length === 0 ? (
+              <EmptyBlock range={range} />
             ) : (
               <div className="overflow-x-auto py-1">
                 <HeartbeatBar beats={portBeats} height={28} />
