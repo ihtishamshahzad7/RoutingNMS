@@ -26,6 +26,7 @@ import (
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/devices"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/discovery"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/dnscheck"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/events"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/incidents"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/ifpoll"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/maintenance"
@@ -160,6 +161,19 @@ func main() {
 		// so the service can bind it without running as root; set
 		// SYSLOG_PORT (or the full SYSLOG_ADDR) to change it, e.g. to a
 		// non-privileged port for a non-systemd/dev setup.
+		// Item 3.3a (SNMP & Syslog Monitoring): unified events backend.
+		// eventsRepo.Record is the single write path every event source
+		// (syslog classification below, and the device/interface transition
+		// scan started further down) funnels through, so dedup is applied
+		// consistently regardless of source.
+		eventsRepo := events.Repository{
+			DedupWindow: time.Duration(envInt("EVENTS_DEDUP_WINDOW_SECONDS", 60)) * time.Second,
+		}
+		eventsRepo.DB = db
+		eventPatterns := events.NewPatternCache(ctx, db, time.Duration(envInt("EVENTS_PATTERN_REFRESH_SECONDS", 30))*time.Second)
+		eventsScanInterval := time.Duration(envInt("EVENTS_SCAN_INTERVAL_SECONDS", 30)) * time.Second
+		go events.ScanPeriodically(ctx, db, eventsRepo, eventsScanInterval)
+
 		syslogAddr := os.Getenv("SYSLOG_ADDR")
 		if syslogAddr == "" {
 			syslogAddr = ":" + strconv.Itoa(envInt("SYSLOG_PORT", 514))
@@ -170,6 +184,8 @@ func main() {
 			RatePerSecond:      float64(envInt("SYSLOG_RATE_LIMIT_PER_SEC", 50)),
 			RateBurst:          float64(envInt("SYSLOG_RATE_BURST", 200)),
 			DeviceCacheRefresh: time.Duration(envInt("SYSLOG_DEVICE_CACHE_REFRESH_SECONDS", 30)) * time.Second,
+			Events:             &eventsRepo,
+			EventPatterns:      eventPatterns,
 		}
 		go func() {
 			if err := syslog.ListenAndServe(ctx, db, syslogAddr, syslogCfg); err != nil {
@@ -438,6 +454,7 @@ func main() {
 		// SyslogPage's JSON parse then failed, always showing "No syslog
 		// messages received yet." even with real data flowing in).
 		mux.Handle("GET /api/v1/syslog", authHandler.Middleware(syslog.API{DB: db}))
+		mux.Handle("GET /api/v1/events", authHandler.Middleware(events.API{Repo: eventsRepo}))
 
 		// SNMP trap history + alert rule engine, as called by
 		// frontend/app/traps/page.tsx.
@@ -838,6 +855,7 @@ func main() {
 		mux.HandleFunc("POST /api/incidents/", unavailable)
 		mux.HandleFunc("GET /api/topology", unavailable)
 		mux.HandleFunc("GET /api/v1/syslog", unavailable)
+	mux.HandleFunc("GET /api/v1/events", unavailable)
 		mux.HandleFunc("GET /api/v1/traps/rules", unavailable)
 		mux.HandleFunc("POST /api/v1/traps/rules", unavailable)
 		mux.HandleFunc("DELETE /api/v1/traps/rules/{id}", unavailable)

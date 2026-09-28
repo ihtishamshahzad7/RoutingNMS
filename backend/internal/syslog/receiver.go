@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/events"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -357,6 +358,13 @@ type Config struct {
 	// DeviceCacheRefresh controls how often the address->device lookup
 	// table is refreshed from the devices table.
 	DeviceCacheRefresh time.Duration
+	// Events/EventPatterns wire in item 3.3a's unified event log: when set,
+	// every stored message is classified and recorded as an event right
+	// after storage. Both nil (the default) disables this -- existing
+	// callers of ListenAndServe that don't care about events keep working
+	// unchanged.
+	Events        *events.Repository
+	EventPatterns *events.PatternCache
 }
 
 func (c Config) withDefaults() Config {
@@ -392,6 +400,9 @@ type receiver struct {
 	queue   chan queuedMessage
 	limiter *rateLimiter
 	devices *deviceCache
+
+	events        *events.Repository
+	eventPatterns *events.PatternCache
 
 	droppedRateLimited int64
 	droppedQueueFull   int64
@@ -441,10 +452,37 @@ func (rc *receiver) worker(ctx context.Context) {
 		case qm := <-rc.queue:
 			deviceID, known := rc.devices.lookup(qm.msg.SourceIP)
 			storeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-			if err := store(storeCtx, rc.db, qm.msg, qm.receivedAt, deviceID, known); err != nil {
-				log.Printf("syslog: store failed (%s): %v", qm.msg.SourceIP, err)
-			}
+			msgID, err := store(storeCtx, rc.db, qm.msg, qm.receivedAt, deviceID, known)
 			cancel()
+			if err != nil {
+				log.Printf("syslog: store failed (%s): %v", qm.msg.SourceIP, err)
+				continue
+			}
+			// Item 3.3a: classify the message into the unified events log
+			// synchronously, right after storing it -- this worker pool is
+			// already the single choke point for every incoming message,
+			// so no second periodic scan is needed for this source.
+			if rc.events != nil {
+				var devIDPtr *int64
+				if known {
+					d := deviceID
+					devIDPtr = &d
+				}
+				messageTS := qm.receivedAt
+				if qm.msg.DeviceTimestamp != nil {
+					messageTS = *qm.msg.DeviceTimestamp
+				}
+				var sevArg *int
+				if qm.msg.Severity >= 0 {
+					s := qm.msg.Severity
+					sevArg = &s
+				}
+				evCtx, evCancel := context.WithTimeout(ctx, 3*time.Second)
+				if err := rc.events.ClassifySyslog(evCtx, rc.eventPatterns, msgID, devIDPtr, qm.msg.Hostname, qm.msg.Body, sevArg, messageTS); err != nil {
+					log.Printf("events: syslog classification failed (%s): %v", qm.msg.SourceIP, err)
+				}
+				evCancel()
+			}
 		}
 	}
 }
@@ -452,7 +490,7 @@ func (rc *receiver) worker(ctx context.Context) {
 // store persists a parsed message. deviceID/known come from the receiver's
 // device cache; known=false stores a NULL device_id ("unknown device") but
 // the message itself is always kept, never dropped for being unmatched.
-func store(ctx context.Context, db *pgxpool.Pool, m Message, receivedAt time.Time, deviceID int64, known bool) error {
+func store(ctx context.Context, db *pgxpool.Pool, m Message, receivedAt time.Time, deviceID int64, known bool) (int64, error) {
 	messageTS := receivedAt
 	if m.DeviceTimestamp != nil {
 		messageTS = *m.DeviceTimestamp
@@ -461,12 +499,14 @@ func store(ctx context.Context, db *pgxpool.Pool, m Message, receivedAt time.Tim
 	if known {
 		deviceIDArg = deviceID
 	}
-	_, err := db.Exec(ctx, `INSERT INTO syslog_messages
+	var id int64
+	err := db.QueryRow(ctx, `INSERT INTO syslog_messages
 			(received_at,source_ip,facility,severity,hostname,tag,message,device_id,message_timestamp,timestamp_estimated)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		RETURNING id`,
 		receivedAt, m.SourceIP, nullableInt(m.Facility), nullableInt(m.Severity), nullableStr(m.Hostname), nullableStr(m.Tag), m.Body,
-		deviceIDArg, messageTS, m.TimestampEstimated)
-	return err
+		deviceIDArg, messageTS, m.TimestampEstimated).Scan(&id)
+	return id, err
 }
 
 func nullableInt(v int) any {
@@ -510,10 +550,12 @@ func ListenAndServe(ctx context.Context, db *pgxpool.Pool, addr string, cfg Conf
 	}
 
 	rc := &receiver{
-		db:      db,
-		queue:   make(chan queuedMessage, cfg.QueueSize),
-		limiter: newRateLimiter(cfg.RatePerSecond, cfg.RateBurst),
-		devices: newDeviceCache(),
+		db:            db,
+		queue:         make(chan queuedMessage, cfg.QueueSize),
+		limiter:       newRateLimiter(cfg.RatePerSecond, cfg.RateBurst),
+		devices:       newDeviceCache(),
+		events:        cfg.Events,
+		eventPatterns: cfg.EventPatterns,
 	}
 	go rc.devices.runPeriodic(ctx, db, cfg.DeviceCacheRefresh)
 	for i := 0; i < cfg.QueueWorkers; i++ {
