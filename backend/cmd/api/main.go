@@ -27,6 +27,7 @@ import (
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/discovery"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/dnscheck"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/incidents"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/ifpoll"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/maintenance"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/metricsdb"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/mib"
@@ -249,6 +250,19 @@ func main() {
 		topoLinkPoller = topolinks.New(topolinks.Repository{DB: db}, devices.Repository{DB: db}, metricsdb.Repository{DB: db})
 		topoLinkPollInterval := time.Duration(envInt("TOPOLOGY_LINK_POLL_INTERVAL_SECONDS", 60)) * time.Second
 		go topoLinkPoller.Run(ctx, topoLinkPollInterval)
+
+		// Item 3.1 (SNMP & Syslog Monitoring): periodic SNMP interface
+		// (IF-MIB) polling for every SNMP-enabled device -- current per-port
+		// state plus an up/down transition history, and device-level SNMP
+		// reachability tracked separately so a device that stops answering
+		// SNMP is never reported as having its ports "down". Runs through
+		// the same pollpool worker pool ping/portcheck use, but additionally
+		// gates each device on its own if_poll_interval_seconds (default
+		// 60s) rather than re-polling every device on every global tick;
+		// IF_POLL_TICK_SECONDS (default 15s) is just the check granularity.
+		ifPoller := ifpoll.New(ifpoll.Repository{DB: db})
+		ifPollTick := time.Duration(envInt("IF_POLL_TICK_SECONDS", 15)) * time.Second
+		go ifPoller.Run(ctx, ifPollTick)
 
 		// Push heartbeat monitor down-detection sweep (ported from Uptime
 		// Kuma's "Push" monitor type): unlike every other monitor type here,
