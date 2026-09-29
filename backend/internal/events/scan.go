@@ -24,7 +24,12 @@ type scanner struct {
 
 	lastDeviceScan  time.Time
 	lastIfTransID   int64
-	watermarksReady bool
+	// Item 3.5: separate watermark per host-metric (cpu_percent,
+	// memory_percent) -- each is scanned independently via scanHostMetric,
+	// same "in-memory watermark, starts at now() on process start" caveat
+	// as lastDeviceScan above.
+	lastHostMetricScan map[string]time.Time
+	watermarksReady    bool
 }
 
 // ScanPeriodically runs both the device-transition and interface-transition
@@ -45,6 +50,8 @@ func ScanPeriodically(ctx context.Context, db *pgxpool.Pool, repo Repository, in
 		case <-ticker.C:
 			s.scanDevices(ctx)
 			s.scanInterfaces(ctx)
+			s.scanHostMetric(ctx, "cpu_percent", "cpu_alert_threshold_pct", "CPU", EventHighCPU, EventCPUNormal)
+			s.scanHostMetric(ctx, "memory_percent", "memory_alert_threshold_pct", "memory", EventHighMemory, EventMemoryNormal)
 		}
 	}
 }
@@ -52,6 +59,10 @@ func ScanPeriodically(ctx context.Context, db *pgxpool.Pool, repo Repository, in
 func (s *scanner) initWatermarks(ctx context.Context) {
 	s.lastDeviceScan = time.Now().UTC()
 	_ = s.db.QueryRow(ctx, `SELECT COALESCE(MAX(id), 0) FROM interface_transitions`).Scan(&s.lastIfTransID)
+	s.lastHostMetricScan = map[string]time.Time{
+		"cpu_percent":    time.Now().UTC(),
+		"memory_percent": time.Now().UTC(),
+	}
 	s.watermarksReady = true
 }
 
@@ -174,4 +185,76 @@ func parseSubjectID(s string) (int64, error) {
 	var id int64
 	_, err := fmt.Sscanf(s, "%d", &id)
 	return id, err
+}
+
+// scanHostMetric detects a device's metric_samples reading (cpu_percent or
+// memory_percent, written by internal/hostmetrics' poller -- item 3.5)
+// crossing the device's own alert threshold column, and records a
+// high_*/*_normal event on each crossing -- level-triggered polling turned
+// into edge-triggered events via LAG(), the same technique scanDevices uses
+// above for the "up" metric, rather than firing (and letting Record's
+// dedup collapse) one event per poll cycle for the whole time a device
+// stays over threshold.
+//
+// thresholdColumn is always one of the two fixed column names this
+// function is called with from ScanPeriodically -- a compile-time
+// constant, not user input -- so building it into the query string here is
+// safe.
+func (s *scanner) scanHostMetric(ctx context.Context, metricName, thresholdColumn, label, highType, normalType string) {
+	tickStart := time.Now().UTC()
+	lastScan := s.lastHostMetricScan[metricName]
+	if lastScan.IsZero() {
+		lastScan = tickStart
+	}
+	rows, err := s.db.Query(ctx, fmt.Sprintf(`
+		WITH ranked AS (
+			SELECT m.subject_id, m.recorded_at, d.name,
+				(m.value >= d.%s) AS above,
+				LAG(m.value >= d.%s) OVER (PARTITION BY m.subject_id ORDER BY m.recorded_at) AS prev_above
+			FROM metric_samples m
+			JOIN devices d ON d.id::text = m.subject_id
+			WHERE m.subject_type = 'device' AND m.metric_name = $1
+			  AND m.recorded_at > $2 - INTERVAL '1 hour'
+			  AND d.enabled = true
+		)
+		SELECT subject_id, name, recorded_at, above
+		FROM ranked
+		WHERE recorded_at > $2 AND prev_above IS NOT NULL AND prev_above <> above
+		ORDER BY recorded_at`, thresholdColumn, thresholdColumn), metricName, lastScan)
+	if err != nil {
+		log.Printf("events: host metric scan (%s) failed: %v", metricName, err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var subjectID, name string
+		var recordedAt time.Time
+		var above bool
+		if err := rows.Scan(&subjectID, &name, &recordedAt, &above); err != nil {
+			log.Printf("events: failed to scan host metric row (%s): %v", metricName, err)
+			continue
+		}
+		deviceID, err := parseSubjectID(subjectID)
+		if err != nil {
+			continue
+		}
+		eventType, severity, msg := normalType, SeverityInfo, fmt.Sprintf("%s: %s usage is back below the alert threshold", name, label)
+		if above {
+			eventType, severity, msg = highType, SeverityWarning, fmt.Sprintf("%s: %s usage is above the alert threshold", name, label)
+		}
+		if err := s.repo.Record(ctx, NewEvent{
+			DeviceID:   &deviceID,
+			EventType:  eventType,
+			Severity:   severity,
+			Message:    msg,
+			Source:     SourcePoller,
+			RefTable:   "metric_samples",
+			RefID:      subjectID,
+			OccurredAt: recordedAt,
+		}); err != nil {
+			log.Printf("events: failed to record host metric event (%s): %v", metricName, err)
+		}
+	}
+	s.lastHostMetricScan[metricName] = tickStart
 }

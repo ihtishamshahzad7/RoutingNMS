@@ -7,7 +7,7 @@ import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianG
 import { RotateCw } from "lucide-react";
 import { ApiError, apiFetch } from "../../../../lib/api";
 import { MetricChart } from "../../../../components/metric-chart";
-import { EngPanel, EngButton, EngModal, ENG } from "../../../../components/ui/engineer";
+import { EngPanel, EngButton, EngModal, EngInput, EngField, ENG } from "../../../../components/ui/engineer";
 import { HeartbeatBar, type Beat } from "../../dashboard/HeartbeatBar";
 import { aggregate, type RawPoint } from "../../../../lib/monitoring-aggregate";
 
@@ -20,7 +20,7 @@ import { aggregate, type RawPoint } from "../../../../lib/monitoring-aggregate";
 
 type CertChainLink={certType:string;subject:string;issuer:string;validFrom:string;validTo:string;fingerprintSha256:string};
 type CertInfo={subject:string;issuer:string;validFrom:string;validTo:string;fingerprintSha256:string;daysRemaining:number;chain:CertChainLink[]};
-type Device={id:string;name:string;address:string;deviceType:string;vendor?:string;serialNumber?:string;enabled:boolean;snmpEnabled:boolean;snmpVersion:string;snmpPort:number;snmpConfigured:boolean;provisioningTemplateId?:number|null;lastProvisionedAt?:string;httpCheckEnabled:boolean;httpUrl?:string;httpExpectedStatus:number;httpKeyword?:string;httpTimeoutMs:number;httpMethod:string;httpBody?:string;httpBodyEncoding:string;httpHeaders?:string;httpAcceptedStatusCodes:string;httpMaxRedirects:number;httpIgnoreTls:boolean;certInfo?:CertInfo|null;icmpEnabled:boolean;icmpIntervalSeconds:number;icmpPacketSize:number;icmpCount:number;icmpRetries:number;dnsEnabled:boolean;dnsHostname?:string;dnsRecordType:string;dnsResolverServer?:string;dnsExpectedAnswer?:string;dnsIntervalSeconds:number;pushEnabled:boolean;pushToken?:string;pushIntervalSeconds:number;pushGracePeriodSeconds:number;pushLastSeenAt?:string;pushLastStatus?:string;pushLastMessage?:string;sshEnabled:boolean;sshPort:number;sshBannerKeyword?:string;sshTimeoutMs:number;sshIntervalSeconds:number;telnetEnabled:boolean;telnetPort:number;telnetBannerKeyword?:string;telnetTimeoutMs:number;telnetIntervalSeconds:number};
+type Device={id:string;name:string;address:string;deviceType:string;vendor?:string;serialNumber?:string;enabled:boolean;snmpEnabled:boolean;snmpVersion:string;snmpPort:number;snmpConfigured:boolean;provisioningTemplateId?:number|null;lastProvisionedAt?:string;httpCheckEnabled:boolean;httpUrl?:string;httpExpectedStatus:number;httpKeyword?:string;httpTimeoutMs:number;httpMethod:string;httpBody?:string;httpBodyEncoding:string;httpHeaders?:string;httpAcceptedStatusCodes:string;httpMaxRedirects:number;httpIgnoreTls:boolean;certInfo?:CertInfo|null;icmpEnabled:boolean;icmpIntervalSeconds:number;icmpPacketSize:number;icmpCount:number;icmpRetries:number;dnsEnabled:boolean;dnsHostname?:string;dnsRecordType:string;dnsResolverServer?:string;dnsExpectedAnswer?:string;dnsIntervalSeconds:number;pushEnabled:boolean;pushToken?:string;pushIntervalSeconds:number;pushGracePeriodSeconds:number;pushLastSeenAt?:string;pushLastStatus?:string;pushLastMessage?:string;sshEnabled:boolean;sshPort:number;sshBannerKeyword?:string;sshTimeoutMs:number;sshIntervalSeconds:number;telnetEnabled:boolean;telnetPort:number;telnetBannerKeyword?:string;telnetTimeoutMs:number;telnetIntervalSeconds:number;cpuAlertThresholdPct:number;memoryAlertThresholdPct:number};
 type DNSLive={live:{resolved:boolean;answers?:string[];latencyMs:number;expectedMatch?:boolean|null;error?:string}};
 type ReachLive={live:{reachable:boolean;banner?:string;latencyMs:number;bannerMatched?:boolean|null;error?:string}};
 type ProvTemplate={id:number;name:string;scriptBody:string};
@@ -168,6 +168,163 @@ function PortHistoryModal({ port, onClose }: { port: Interface; onClose: () => v
     </EngModal>
   );
 }
+
+// Item 3.5 (CPU/memory polling): history point from GET
+// /api/v1/devices/{id}/host-metrics/history-range. Reuses PortRange/
+// PORT_RANGES for the 1h/24h/7d selector -- same range shape as the Ports
+// history, per the "same chart style and range selector as the Ports
+// history" instruction.
+type HostMetricPoint={probedAt:string;cpuPercent?:number|null;memoryPercent?:number|null};
+
+/** CPU/memory graph + configurable alert thresholds (item 3.5), inline on
+ * the device detail page (not a click-through modal like Ports history,
+ * since the requirement was a graph "on the device detail page"). Reuses
+ * the same LineChart styling, aggregate() bucketing and 1h/24h/7d range
+ * selector as PortHistoryModal above. */
+function HostMetricsPanel({ device, onDeviceUpdate }: { device: Device; onDeviceUpdate: (d: Device) => void }) {
+  const [range, setRange] = useState<PortRange>("24h");
+  const [history, setHistory] = useState<HostMetricPoint[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [cpuThreshold, setCpuThreshold] = useState(String(device.cpuAlertThresholdPct));
+  const [memThreshold, setMemThreshold] = useState(String(device.memoryAlertThresholdPct));
+  const [thresholdSaving, setThresholdSaving] = useState(false);
+  const [thresholdMessage, setThresholdMessage] = useState("");
+
+  const loadHistory = useCallback(() => {
+    let active = true;
+    setLoading(true);
+    apiFetch<{ history: HostMetricPoint[] }>(`/devices/${device.id}/host-metrics/history-range?range=${range}`)
+      .then((r) => { if (active) { setHistory(r.history); setError(""); } })
+      .catch((e) => { if (active) setError(e instanceof ApiError ? e.message : "Unable to load CPU/memory history."); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [device.id, range]);
+
+  useEffect(() => loadHistory(), [loadHistory]);
+  useEffect(() => { setCpuThreshold(String(device.cpuAlertThresholdPct)); setMemThreshold(String(device.memoryAlertThresholdPct)); }, [device.cpuAlertThresholdPct, device.memoryAlertThresholdPct]);
+
+  const cpuAgg = useMemo(
+    () => aggregate(history.map((p): RawPoint => ({ t: new Date(p.probedAt).getTime(), latencyMs: p.cpuPercent ?? null, reachable: true })), range),
+    [history, range]
+  );
+  const memAgg = useMemo(
+    () => aggregate(history.map((p): RawPoint => ({ t: new Date(p.probedAt).getTime(), latencyMs: p.memoryPercent ?? null, reachable: true })), range),
+    [history, range]
+  );
+
+  const axisCommon = {
+    stroke: "#5C6B7A",
+    tick: { fontSize: 10, fill: "#5C6B7A" },
+    axisLine: { stroke: "#DCE1E8" },
+    tickLine: { stroke: "#DCE1E8" },
+  };
+  const fmtPct = (v?: number | null) => (v == null ? "—" : `${v.toFixed(1)}%`);
+
+  async function saveThresholds(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setThresholdSaving(true);
+    setThresholdMessage("");
+    try {
+      const updated = await apiFetch<Device>(`/devices/${device.id}/host-metrics-thresholds`, {
+        method: "PUT",
+        body: JSON.stringify({ cpuAlertThresholdPct: Number(cpuThreshold || 85), memoryAlertThresholdPct: Number(memThreshold || 90) }),
+      });
+      onDeviceUpdate(updated);
+      setThresholdMessage("Alert thresholds saved.");
+    } catch (e) {
+      setThresholdMessage(e instanceof ApiError ? e.message : "Failed to save alert thresholds.");
+    } finally {
+      setThresholdSaving(false);
+    }
+  }
+
+  return (
+    <EngPanel
+      title="CPU & memory"
+      actions={<EngButton onClick={loadHistory}><RotateCw size={13} /> Refresh</EngButton>}
+      className="mt-6"
+    >
+      <p className="mb-3 -mt-1 text-[11px] text-[#8A96A3]">Polled via HOST-RESOURCES-MIB (or the vendor-specific MIB for MikroTik/Cisco IOS). Crossing the threshold below fires a high-CPU/high-memory event on the Events page; dropping back below fires the matching *-normal event.</p>
+      <form onSubmit={saveThresholds} className="mb-4 flex flex-wrap items-end gap-3 rounded-[4px] border border-[#DCE1E8] bg-[#F9FAFC] p-3">
+        <EngField label="CPU alert threshold (%)">
+          <EngInput type="number" min={1} max={100} value={cpuThreshold} onChange={(e) => setCpuThreshold(e.target.value)} className="w-28" />
+        </EngField>
+        <EngField label="Memory alert threshold (%)">
+          <EngInput type="number" min={1} max={100} value={memThreshold} onChange={(e) => setMemThreshold(e.target.value)} className="w-28" />
+        </EngField>
+        <EngButton variant="primary" disabled={thresholdSaving}>{thresholdSaving ? "Saving…" : "Save thresholds"}</EngButton>
+        {thresholdMessage && <span className="pb-1.5 text-[12px] text-[#5C6B7A]">{thresholdMessage}</span>}
+      </form>
+      <div className="mb-3 flex justify-end">
+        <div className="flex rounded-[4px] border border-[#DCE1E8] bg-white p-0.5">
+          {PORT_RANGES.map((r) => (
+            <button
+              key={r.key}
+              onClick={() => setRange(r.key)}
+              className={`rounded-[3px] px-3 py-1 text-[12px] font-medium transition-colors duration-150 ${
+                range === r.key ? "bg-[#2E7BF6] text-white" : "text-[#5C6B7A] hover:bg-[#F4F6F9]"
+              }`}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {loading ? (
+        <div className="py-10 text-center text-[13px] text-[#8A96A3]">Loading…</div>
+      ) : error ? (
+        <div className="flex flex-col items-center gap-2 py-10 text-center">
+          <span className="text-[13px] text-[#C4362D]">{error}</span>
+          <button
+            onClick={loadHistory}
+            className="inline-flex items-center gap-1.5 rounded-[4px] border border-[#DCE1E8] bg-white px-3 py-1.5 text-[12px] font-medium text-[#1F2A37] hover:bg-[#F4F6F9]"
+          >
+            <RotateCw size={12} /> Retry
+          </button>
+        </div>
+      ) : history.length === 0 ? (
+        <div className="py-10 text-center text-[13px] text-[#8A96A3]">No CPU/memory history in this range yet.</div>
+      ) : (
+        <>
+          <div className="mb-4">
+            <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#5C6B7A]">CPU %</div>
+            <ResponsiveContainer width="100%" height={140}>
+              <LineChart data={cpuAgg.map((p) => ({ t: p.t, v: p.avgLatencyMs }))}>
+                <CartesianGrid stroke="#EEF1F4" vertical={false} />
+                <XAxis dataKey="t" type="number" domain={["dataMin", "dataMax"]} tickFormatter={(t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} {...axisCommon} />
+                <YAxis width={44} domain={[0, 100]} tickFormatter={(v) => `${v}%`} {...axisCommon} />
+                <Tooltip
+                  contentStyle={{ background: "#FFFFFF", border: "1px solid #DCE1E8", borderRadius: 4, fontSize: 12, fontFamily: "inherit" }}
+                  labelFormatter={(t) => new Date(t as number).toLocaleString()}
+                  formatter={(v) => [fmtPct(v as number), "CPU"]}
+                />
+                <Line type="monotone" dataKey="v" stroke="#2E7BF6" strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+          <div>
+            <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#5C6B7A]">Memory %</div>
+            <ResponsiveContainer width="100%" height={140}>
+              <LineChart data={memAgg.map((p) => ({ t: p.t, v: p.avgLatencyMs }))}>
+                <CartesianGrid stroke="#EEF1F4" vertical={false} />
+                <XAxis dataKey="t" type="number" domain={["dataMin", "dataMax"]} tickFormatter={(t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} {...axisCommon} />
+                <YAxis width={44} domain={[0, 100]} tickFormatter={(v) => `${v}%`} {...axisCommon} />
+                <Tooltip
+                  contentStyle={{ background: "#FFFFFF", border: "1px solid #DCE1E8", borderRadius: 4, fontSize: 12, fontFamily: "inherit" }}
+                  labelFormatter={(t) => new Date(t as number).toLocaleString()}
+                  formatter={(v) => [fmtPct(v as number), "Memory"]}
+                />
+                <Line type="monotone" dataKey="v" stroke="#1E8E5A" strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </>
+      )}
+    </EngPanel>
+  );
+}
+
 type PingResult={id:number;deviceId:string;probedAt:string;rttMs?:number|null;jitterMs?:number|null;lossPct:number;ttl?:number|null;isReachable:boolean};
 type PingLive={live?:{address?:string;reachable:boolean;rttMs?:number;jitterMs?:number;lossPct?:number;ttl?:number;error?:string};history:PingResult[]};
 type Tag={id:number;name:string;color:string};
@@ -535,6 +692,7 @@ export default function DeviceDetailsPage(){
      </EngPanel>
    );
  })()}
+ {device.snmpEnabled && <HostMetricsPanel device={device} onDeviceUpdate={setDevice} />}
  {historyPort && <PortHistoryModal port={historyPort} onClose={() => setHistoryPort(null)} />}
  </main>
 }

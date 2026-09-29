@@ -23,6 +23,13 @@ type SNMPConfigRequest struct {
 	TimeoutMS int    `json:"timeoutMs"`
 }
 
+// HostMetricsThresholdsRequest is the body of PUT
+// /api/v1/devices/{id}/host-metrics-thresholds (item 3.5).
+type HostMetricsThresholdsRequest struct {
+	CPUAlertThresholdPct    int `json:"cpuAlertThresholdPct"`
+	MemoryAlertThresholdPct int `json:"memoryAlertThresholdPct"`
+}
+
 func (h Handler) Create(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", 405)
@@ -303,11 +310,41 @@ func (h Handler) UpdateICMPCheck(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(d)
 }
 
+// UpdateHostMetricsThresholds backs PUT /api/v1/devices/{id}/host-metrics-
+// thresholds -- item 3.5's configurable per-device CPU/memory alert
+// thresholds (default 85%/90%, migration 0053).
+func (h Handler) UpdateHostMetricsThresholds(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "device ID is required", 400)
+		return
+	}
+	var req HostMetricsThresholdsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON", 400)
+		return
+	}
+	if err := h.Repo.UpdateHostMetricsThresholds(r.Context(), id, req); err != nil {
+		http.Error(w, "failed to save host metrics thresholds: "+err.Error(), 500)
+		return
+	}
+	d, err := h.Repo.GetByID(r.Context(), id)
+	if err != nil {
+		http.Error(w, "device not found", 404)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(d)
+}
+
 // UpdateSSHCheck backs PUT /api/v1/devices/{id}/ssh-check -- configures the
 // optional SSH reachability monitor (TCP-connect + optional banner match).
 func (h Handler) UpdateSSHCheck(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPut {
-		http.Error(w, "method not allowed", 405)
+	if r.Method != http.MethodPut {		http.Error(w, "method not allowed", 405)
 		return
 	}
 	id := r.PathValue("id")

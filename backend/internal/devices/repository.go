@@ -91,6 +91,11 @@ type Record struct {
 	TelnetBannerKeyword       string     `json:"telnetBannerKeyword,omitempty"`
 	TelnetTimeoutMS           int        `json:"telnetTimeoutMs"`
 	TelnetIntervalSeconds     int        `json:"telnetIntervalSeconds"`
+	// Item 3.5: per-device CPU/memory alert thresholds (migration 0053).
+	// Defaults (85/90) are set at the column level, so any device created
+	// before this column existed still reads a sane value.
+	CPUAlertThresholdPct    int `json:"cpuAlertThresholdPct"`
+	MemoryAlertThresholdPct int `json:"memoryAlertThresholdPct"`
 }
 
 // CertInfo is the latest-known TLS certificate detail for a device's
@@ -282,7 +287,7 @@ func (r Repository) List(ctx context.Context, organizationID string) ([]Record, 
 	if r.DB == nil {
 		return nil, fmt.Errorf("device repository is not initialized")
 	}
-	rows, err := r.DB.Query(ctx, `SELECT id,organization_id,name,address,device_type,vendor,model,serial_number,enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port,http_check_enabled,http_url,http_expected_status,http_keyword,http_timeout_ms,http_method,http_body,http_body_encoding,http_headers,http_accepted_statuscodes,http_max_redirects,http_ignore_tls,icmp_enabled,icmp_interval_seconds,icmp_packet_size,icmp_count,icmp_retries,port_check_enabled,port_check_protocol,port_check_port,port_check_path,port_check_accepted_statuscodes,port_check_interval_seconds,dns_enabled,dns_hostname,dns_record_type,dns_resolver_server,dns_expected_answer,dns_interval_seconds,push_enabled,COALESCE(push_token,''),push_interval_seconds,push_grace_period_seconds,push_last_seen_at,push_last_status,push_last_message,ssh_enabled,ssh_port,ssh_banner_keyword,ssh_timeout_ms,ssh_interval_seconds,telnet_enabled,telnet_port,telnet_banner_keyword,telnet_timeout_ms,telnet_interval_seconds FROM devices WHERE organization_id=$1 ORDER BY name`, organizationID)
+	rows, err := r.DB.Query(ctx, `SELECT id,organization_id,name,address,device_type,vendor,model,serial_number,enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port,http_check_enabled,http_url,http_expected_status,http_keyword,http_timeout_ms,http_method,http_body,http_body_encoding,http_headers,http_accepted_statuscodes,http_max_redirects,http_ignore_tls,icmp_enabled,icmp_interval_seconds,icmp_packet_size,icmp_count,icmp_retries,port_check_enabled,port_check_protocol,port_check_port,port_check_path,port_check_accepted_statuscodes,port_check_interval_seconds,dns_enabled,dns_hostname,dns_record_type,dns_resolver_server,dns_expected_answer,dns_interval_seconds,push_enabled,COALESCE(push_token,''),push_interval_seconds,push_grace_period_seconds,push_last_seen_at,push_last_status,push_last_message,ssh_enabled,ssh_port,ssh_banner_keyword,ssh_timeout_ms,ssh_interval_seconds,telnet_enabled,telnet_port,telnet_banner_keyword,telnet_timeout_ms,telnet_interval_seconds,cpu_alert_threshold_pct,memory_alert_threshold_pct FROM devices WHERE organization_id=$1 ORDER BY name`, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -290,7 +295,7 @@ func (r Repository) List(ctx context.Context, organizationID string) ([]Record, 
 	items := []Record{}
 	for rows.Next() {
 		var d Record
-		if err := rows.Scan(&d.ID, &d.OrganizationID, &d.Name, &d.Address, &d.DeviceType, &d.Vendor, &d.Model, &d.SerialNumber, &d.Enabled, &d.MonitoringIntervalSeconds, &d.SNMPEnabled, &d.SNMPVersion, &d.SNMPPort, &d.HTTPCheckEnabled, &d.HTTPURL, &d.HTTPExpectedStatus, &d.HTTPKeyword, &d.HTTPTimeoutMS, &d.HTTPMethod, &d.HTTPBody, &d.HTTPBodyEncoding, &d.HTTPHeaders, &d.HTTPAcceptedStatusCodes, &d.HTTPMaxRedirects, &d.HTTPIgnoreTLS, &d.ICMPEnabled, &d.ICMPIntervalSeconds, &d.ICMPPacketSize, &d.ICMPCount, &d.ICMPRetries, &d.PortCheckEnabled, &d.PortCheckProtocol, &d.PortCheckPort, &d.PortCheckPath, &d.PortCheckAcceptedStatusCodes, &d.PortCheckIntervalSeconds, &d.DNSEnabled, &d.DNSHostname, &d.DNSRecordType, &d.DNSResolverServer, &d.DNSExpectedAnswer, &d.DNSIntervalSeconds, &d.PushEnabled, &d.PushToken, &d.PushIntervalSeconds, &d.PushGracePeriodSeconds, &d.PushLastSeenAt, &d.PushLastStatus, &d.PushLastMessage, &d.SSHEnabled, &d.SSHPort, &d.SSHBannerKeyword, &d.SSHTimeoutMS, &d.SSHIntervalSeconds, &d.TelnetEnabled, &d.TelnetPort, &d.TelnetBannerKeyword, &d.TelnetTimeoutMS, &d.TelnetIntervalSeconds); err != nil {
+		if err := rows.Scan(&d.ID, &d.OrganizationID, &d.Name, &d.Address, &d.DeviceType, &d.Vendor, &d.Model, &d.SerialNumber, &d.Enabled, &d.MonitoringIntervalSeconds, &d.SNMPEnabled, &d.SNMPVersion, &d.SNMPPort, &d.HTTPCheckEnabled, &d.HTTPURL, &d.HTTPExpectedStatus, &d.HTTPKeyword, &d.HTTPTimeoutMS, &d.HTTPMethod, &d.HTTPBody, &d.HTTPBodyEncoding, &d.HTTPHeaders, &d.HTTPAcceptedStatusCodes, &d.HTTPMaxRedirects, &d.HTTPIgnoreTLS, &d.ICMPEnabled, &d.ICMPIntervalSeconds, &d.ICMPPacketSize, &d.ICMPCount, &d.ICMPRetries, &d.PortCheckEnabled, &d.PortCheckProtocol, &d.PortCheckPort, &d.PortCheckPath, &d.PortCheckAcceptedStatusCodes, &d.PortCheckIntervalSeconds, &d.DNSEnabled, &d.DNSHostname, &d.DNSRecordType, &d.DNSResolverServer, &d.DNSExpectedAnswer, &d.DNSIntervalSeconds, &d.PushEnabled, &d.PushToken, &d.PushIntervalSeconds, &d.PushGracePeriodSeconds, &d.PushLastSeenAt, &d.PushLastStatus, &d.PushLastMessage, &d.SSHEnabled, &d.SSHPort, &d.SSHBannerKeyword, &d.SSHTimeoutMS, &d.SSHIntervalSeconds, &d.TelnetEnabled, &d.TelnetPort, &d.TelnetBannerKeyword, &d.TelnetTimeoutMS, &d.TelnetIntervalSeconds, &d.CPUAlertThresholdPct, &d.MemoryAlertThresholdPct); err != nil {
 			return nil, err
 		}
 		d.SNMPConfigured = d.SNMPEnabled
@@ -306,7 +311,7 @@ func (r Repository) ListAllEnabled(ctx context.Context) ([]Record, error) {
 	if r.DB == nil {
 		return nil, fmt.Errorf("device repository is not initialized")
 	}
-	rows, err := r.DB.Query(ctx, `SELECT id,organization_id,name,address,device_type,vendor,model,serial_number,enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port,http_check_enabled,http_url,http_expected_status,http_keyword,http_timeout_ms,http_method,http_body,http_body_encoding,http_headers,http_accepted_statuscodes,http_max_redirects,http_ignore_tls,icmp_enabled,icmp_interval_seconds,icmp_packet_size,icmp_count,icmp_retries,port_check_enabled,port_check_protocol,port_check_port,port_check_path,port_check_accepted_statuscodes,port_check_interval_seconds,dns_enabled,dns_hostname,dns_record_type,dns_resolver_server,dns_expected_answer,dns_interval_seconds,push_enabled,COALESCE(push_token,''),push_interval_seconds,push_grace_period_seconds,push_last_seen_at,push_last_status,push_last_message,ssh_enabled,ssh_port,ssh_banner_keyword,ssh_timeout_ms,ssh_interval_seconds,telnet_enabled,telnet_port,telnet_banner_keyword,telnet_timeout_ms,telnet_interval_seconds FROM devices WHERE enabled=true ORDER BY name`)
+	rows, err := r.DB.Query(ctx, `SELECT id,organization_id,name,address,device_type,vendor,model,serial_number,enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port,http_check_enabled,http_url,http_expected_status,http_keyword,http_timeout_ms,http_method,http_body,http_body_encoding,http_headers,http_accepted_statuscodes,http_max_redirects,http_ignore_tls,icmp_enabled,icmp_interval_seconds,icmp_packet_size,icmp_count,icmp_retries,port_check_enabled,port_check_protocol,port_check_port,port_check_path,port_check_accepted_statuscodes,port_check_interval_seconds,dns_enabled,dns_hostname,dns_record_type,dns_resolver_server,dns_expected_answer,dns_interval_seconds,push_enabled,COALESCE(push_token,''),push_interval_seconds,push_grace_period_seconds,push_last_seen_at,push_last_status,push_last_message,ssh_enabled,ssh_port,ssh_banner_keyword,ssh_timeout_ms,ssh_interval_seconds,telnet_enabled,telnet_port,telnet_banner_keyword,telnet_timeout_ms,telnet_interval_seconds,cpu_alert_threshold_pct,memory_alert_threshold_pct FROM devices WHERE enabled=true ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -314,7 +319,7 @@ func (r Repository) ListAllEnabled(ctx context.Context) ([]Record, error) {
 	items := []Record{}
 	for rows.Next() {
 		var d Record
-		if err := rows.Scan(&d.ID, &d.OrganizationID, &d.Name, &d.Address, &d.DeviceType, &d.Vendor, &d.Model, &d.SerialNumber, &d.Enabled, &d.MonitoringIntervalSeconds, &d.SNMPEnabled, &d.SNMPVersion, &d.SNMPPort, &d.HTTPCheckEnabled, &d.HTTPURL, &d.HTTPExpectedStatus, &d.HTTPKeyword, &d.HTTPTimeoutMS, &d.HTTPMethod, &d.HTTPBody, &d.HTTPBodyEncoding, &d.HTTPHeaders, &d.HTTPAcceptedStatusCodes, &d.HTTPMaxRedirects, &d.HTTPIgnoreTLS, &d.ICMPEnabled, &d.ICMPIntervalSeconds, &d.ICMPPacketSize, &d.ICMPCount, &d.ICMPRetries, &d.PortCheckEnabled, &d.PortCheckProtocol, &d.PortCheckPort, &d.PortCheckPath, &d.PortCheckAcceptedStatusCodes, &d.PortCheckIntervalSeconds, &d.DNSEnabled, &d.DNSHostname, &d.DNSRecordType, &d.DNSResolverServer, &d.DNSExpectedAnswer, &d.DNSIntervalSeconds, &d.PushEnabled, &d.PushToken, &d.PushIntervalSeconds, &d.PushGracePeriodSeconds, &d.PushLastSeenAt, &d.PushLastStatus, &d.PushLastMessage, &d.SSHEnabled, &d.SSHPort, &d.SSHBannerKeyword, &d.SSHTimeoutMS, &d.SSHIntervalSeconds, &d.TelnetEnabled, &d.TelnetPort, &d.TelnetBannerKeyword, &d.TelnetTimeoutMS, &d.TelnetIntervalSeconds); err != nil {
+		if err := rows.Scan(&d.ID, &d.OrganizationID, &d.Name, &d.Address, &d.DeviceType, &d.Vendor, &d.Model, &d.SerialNumber, &d.Enabled, &d.MonitoringIntervalSeconds, &d.SNMPEnabled, &d.SNMPVersion, &d.SNMPPort, &d.HTTPCheckEnabled, &d.HTTPURL, &d.HTTPExpectedStatus, &d.HTTPKeyword, &d.HTTPTimeoutMS, &d.HTTPMethod, &d.HTTPBody, &d.HTTPBodyEncoding, &d.HTTPHeaders, &d.HTTPAcceptedStatusCodes, &d.HTTPMaxRedirects, &d.HTTPIgnoreTLS, &d.ICMPEnabled, &d.ICMPIntervalSeconds, &d.ICMPPacketSize, &d.ICMPCount, &d.ICMPRetries, &d.PortCheckEnabled, &d.PortCheckProtocol, &d.PortCheckPort, &d.PortCheckPath, &d.PortCheckAcceptedStatusCodes, &d.PortCheckIntervalSeconds, &d.DNSEnabled, &d.DNSHostname, &d.DNSRecordType, &d.DNSResolverServer, &d.DNSExpectedAnswer, &d.DNSIntervalSeconds, &d.PushEnabled, &d.PushToken, &d.PushIntervalSeconds, &d.PushGracePeriodSeconds, &d.PushLastSeenAt, &d.PushLastStatus, &d.PushLastMessage, &d.SSHEnabled, &d.SSHPort, &d.SSHBannerKeyword, &d.SSHTimeoutMS, &d.SSHIntervalSeconds, &d.TelnetEnabled, &d.TelnetPort, &d.TelnetBannerKeyword, &d.TelnetTimeoutMS, &d.TelnetIntervalSeconds, &d.CPUAlertThresholdPct, &d.MemoryAlertThresholdPct); err != nil {
 			return nil, err
 		}
 		d.SNMPConfigured = d.SNMPEnabled
@@ -473,6 +478,26 @@ func (r Repository) UpdateSNMP(ctx context.Context, id string, req SNMPConfigReq
 	return err
 }
 
+// UpdateHostMetricsThresholds configures item 3.5's per-device CPU/memory
+// alert thresholds (migration 0053) -- the percentages
+// internal/events/scan.go's scanHostMetric compares each new
+// cpu_percent/memory_percent metric_samples reading against to fire
+// high_cpu/high_memory events. 1-100 is enforced here (not just at the
+// handler) since this is the only write path to these columns.
+func (r Repository) UpdateHostMetricsThresholds(ctx context.Context, id string, req HostMetricsThresholdsRequest) error {
+	if r.DB == nil {
+		return fmt.Errorf("device repository is not initialized")
+	}
+	if req.CPUAlertThresholdPct < 1 || req.CPUAlertThresholdPct > 100 {
+		return fmt.Errorf("cpuAlertThresholdPct must be between 1 and 100")
+	}
+	if req.MemoryAlertThresholdPct < 1 || req.MemoryAlertThresholdPct > 100 {
+		return fmt.Errorf("memoryAlertThresholdPct must be between 1 and 100")
+	}
+	_, err := r.DB.Exec(ctx, `UPDATE devices SET cpu_alert_threshold_pct=$2,memory_alert_threshold_pct=$3,updated_at=NOW() WHERE id=$1`, id, req.CPUAlertThresholdPct, req.MemoryAlertThresholdPct)
+	return err
+}
+
 // GetBySerial looks up an enabled device by its serial number -- used by the
 // RouterOS provisioning fetch endpoint, which authenticates the caller by a
 // shared token rather than a session, so the serial number in the URL is the
@@ -495,8 +520,8 @@ func (r Repository) GetByID(ctx context.Context, id string) (Record, error) {
 	}
 	var d Record
 	var certInfoJSON *string
-	err := r.DB.QueryRow(ctx, `SELECT id,organization_id,name,address,device_type,COALESCE(vendor,''),COALESCE(model,''),COALESCE(serial_number,''),enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port,provisioning_template_id,last_provisioned_at,http_check_enabled,http_url,http_expected_status,http_keyword,http_timeout_ms,http_method,http_body,http_body_encoding,http_headers,http_accepted_statuscodes,http_max_redirects,http_ignore_tls,http_cert_info_json,icmp_enabled,icmp_interval_seconds,icmp_packet_size,icmp_count,icmp_retries,port_check_enabled,port_check_protocol,port_check_port,port_check_path,port_check_accepted_statuscodes,port_check_interval_seconds,dns_enabled,dns_hostname,dns_record_type,dns_resolver_server,dns_expected_answer,dns_interval_seconds,push_enabled,COALESCE(push_token,''),push_interval_seconds,push_grace_period_seconds,push_last_seen_at,push_last_status,push_last_message,ssh_enabled,ssh_port,ssh_banner_keyword,ssh_timeout_ms,ssh_interval_seconds,telnet_enabled,telnet_port,telnet_banner_keyword,telnet_timeout_ms,telnet_interval_seconds FROM devices WHERE id=$1`, id).
-		Scan(&d.ID, &d.OrganizationID, &d.Name, &d.Address, &d.DeviceType, &d.Vendor, &d.Model, &d.SerialNumber, &d.Enabled, &d.MonitoringIntervalSeconds, &d.SNMPEnabled, &d.SNMPVersion, &d.SNMPPort, &d.ProvisioningTemplateID, &d.LastProvisionedAt, &d.HTTPCheckEnabled, &d.HTTPURL, &d.HTTPExpectedStatus, &d.HTTPKeyword, &d.HTTPTimeoutMS, &d.HTTPMethod, &d.HTTPBody, &d.HTTPBodyEncoding, &d.HTTPHeaders, &d.HTTPAcceptedStatusCodes, &d.HTTPMaxRedirects, &d.HTTPIgnoreTLS, &certInfoJSON, &d.ICMPEnabled, &d.ICMPIntervalSeconds, &d.ICMPPacketSize, &d.ICMPCount, &d.ICMPRetries, &d.PortCheckEnabled, &d.PortCheckProtocol, &d.PortCheckPort, &d.PortCheckPath, &d.PortCheckAcceptedStatusCodes, &d.PortCheckIntervalSeconds, &d.DNSEnabled, &d.DNSHostname, &d.DNSRecordType, &d.DNSResolverServer, &d.DNSExpectedAnswer, &d.DNSIntervalSeconds, &d.PushEnabled, &d.PushToken, &d.PushIntervalSeconds, &d.PushGracePeriodSeconds, &d.PushLastSeenAt, &d.PushLastStatus, &d.PushLastMessage, &d.SSHEnabled, &d.SSHPort, &d.SSHBannerKeyword, &d.SSHTimeoutMS, &d.SSHIntervalSeconds, &d.TelnetEnabled, &d.TelnetPort, &d.TelnetBannerKeyword, &d.TelnetTimeoutMS, &d.TelnetIntervalSeconds)
+	err := r.DB.QueryRow(ctx, `SELECT id,organization_id,name,address,device_type,COALESCE(vendor,''),COALESCE(model,''),COALESCE(serial_number,''),enabled,monitoring_interval_seconds,snmp_enabled,snmp_version,snmp_port,provisioning_template_id,last_provisioned_at,http_check_enabled,http_url,http_expected_status,http_keyword,http_timeout_ms,http_method,http_body,http_body_encoding,http_headers,http_accepted_statuscodes,http_max_redirects,http_ignore_tls,http_cert_info_json,icmp_enabled,icmp_interval_seconds,icmp_packet_size,icmp_count,icmp_retries,port_check_enabled,port_check_protocol,port_check_port,port_check_path,port_check_accepted_statuscodes,port_check_interval_seconds,dns_enabled,dns_hostname,dns_record_type,dns_resolver_server,dns_expected_answer,dns_interval_seconds,push_enabled,COALESCE(push_token,''),push_interval_seconds,push_grace_period_seconds,push_last_seen_at,push_last_status,push_last_message,ssh_enabled,ssh_port,ssh_banner_keyword,ssh_timeout_ms,ssh_interval_seconds,telnet_enabled,telnet_port,telnet_banner_keyword,telnet_timeout_ms,telnet_interval_seconds,cpu_alert_threshold_pct,memory_alert_threshold_pct FROM devices WHERE id=$1`, id).
+		Scan(&d.ID, &d.OrganizationID, &d.Name, &d.Address, &d.DeviceType, &d.Vendor, &d.Model, &d.SerialNumber, &d.Enabled, &d.MonitoringIntervalSeconds, &d.SNMPEnabled, &d.SNMPVersion, &d.SNMPPort, &d.ProvisioningTemplateID, &d.LastProvisionedAt, &d.HTTPCheckEnabled, &d.HTTPURL, &d.HTTPExpectedStatus, &d.HTTPKeyword, &d.HTTPTimeoutMS, &d.HTTPMethod, &d.HTTPBody, &d.HTTPBodyEncoding, &d.HTTPHeaders, &d.HTTPAcceptedStatusCodes, &d.HTTPMaxRedirects, &d.HTTPIgnoreTLS, &certInfoJSON, &d.ICMPEnabled, &d.ICMPIntervalSeconds, &d.ICMPPacketSize, &d.ICMPCount, &d.ICMPRetries, &d.PortCheckEnabled, &d.PortCheckProtocol, &d.PortCheckPort, &d.PortCheckPath, &d.PortCheckAcceptedStatusCodes, &d.PortCheckIntervalSeconds, &d.DNSEnabled, &d.DNSHostname, &d.DNSRecordType, &d.DNSResolverServer, &d.DNSExpectedAnswer, &d.DNSIntervalSeconds, &d.PushEnabled, &d.PushToken, &d.PushIntervalSeconds, &d.PushGracePeriodSeconds, &d.PushLastSeenAt, &d.PushLastStatus, &d.PushLastMessage, &d.SSHEnabled, &d.SSHPort, &d.SSHBannerKeyword, &d.SSHTimeoutMS, &d.SSHIntervalSeconds, &d.TelnetEnabled, &d.TelnetPort, &d.TelnetBannerKeyword, &d.TelnetTimeoutMS, &d.TelnetIntervalSeconds, &d.CPUAlertThresholdPct, &d.MemoryAlertThresholdPct)
 	d.SNMPConfigured = d.SNMPEnabled
 	if err == nil && certInfoJSON != nil && *certInfoJSON != "" {
 		var ci CertInfo

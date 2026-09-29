@@ -1,11 +1,11 @@
 // Package events implements item 3.3a of the SNMP & Syslog Monitoring
 // build: a single, deduplicated event log unifying device down/up
 // (internal/devices' metric_samples "up" transitions), interface down/up
-// (internal/ifpoll's interface_transitions), and classified syslog
-// messages (internal/syslog). Every other source -- SNMP-trap-derived
-// events, and item 3.5's future CPU/memory events -- plugs into the same
-// model by calling Repository.Record with a new EventType; no schema
-// change is needed for that.
+// (internal/ifpoll's interface_transitions), classified syslog messages
+// (internal/syslog), and (item 3.5) CPU/memory threshold crossings
+// (internal/hostmetrics' cpu_percent/memory_percent metric_samples). Every
+// source plugs into the same model by calling Repository.Record with a new
+// EventType; no schema change is needed for that.
 package events
 
 import (
@@ -46,6 +46,12 @@ const (
 	EventAuthFailure        = "auth_failure"
 	EventDeviceReboot       = "device_reboot"
 	EventSyslog             = "syslog" // unmatched syslog: no classifier pattern fired
+	// Item 3.5: CPU/memory threshold crossings, sourced from
+	// internal/hostmetrics' poller via scanHostMetric in scan.go.
+	EventHighCPU      = "high_cpu"
+	EventCPUNormal    = "cpu_normal"
+	EventHighMemory   = "high_memory"
+	EventMemoryNormal = "memory_normal"
 )
 
 // DefaultDedupWindow is used when Repository.DedupWindow is unset.

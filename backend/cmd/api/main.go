@@ -27,6 +27,7 @@ import (
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/discovery"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/dnscheck"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/events"
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/hostmetrics"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/incidents"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/ifpoll"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/maintenance"
@@ -290,6 +291,17 @@ func main() {
 		ifPollTick := time.Duration(envInt("IF_POLL_TICK_SECONDS", 15)) * time.Second
 		go ifPoller.Run(ctx, ifPollTick)
 
+		// Item 3.5 (SNMP & Syslog Monitoring): CPU/memory polling. Same
+		// fixed-tick-for-every-enabled-device shape as ping/portcheck
+		// rather than ifpoll's per-device interval (there's no per-device
+		// host-metrics interval column). Threshold-crossing events are
+		// fired separately by events.ScanPeriodically above, which
+		// watches the metric_samples this writes -- see
+		// internal/hostmetrics' package doc comment.
+		hostMetricsPoller := hostmetrics.New(hostmetrics.Repository{DB: db}, metricsdb.Repository{DB: db})
+		hostMetricsTick := time.Duration(envInt("HOST_METRICS_POLL_INTERVAL_SECONDS", 60)) * time.Second
+		go hostMetricsPoller.Run(ctx, hostMetricsTick)
+
 		// Push heartbeat monitor down-detection sweep (ported from Uptime
 		// Kuma's "Push" monitor type): unlike every other monitor type here,
 		// nothing is polled -- the monitored thing calls RoutingNMS on its
@@ -361,6 +373,9 @@ func main() {
 		mux.Handle("PUT /api/v1/devices/{id}/push-check", authHandler.Middleware(http.HandlerFunc(deviceHandler.UpdatePushCheck)))
 		mux.Handle("PUT /api/v1/devices/{id}/ssh-check", authHandler.Middleware(http.HandlerFunc(deviceHandler.UpdateSSHCheck)))
 		mux.Handle("PUT /api/v1/devices/{id}/telnet-check", authHandler.Middleware(http.HandlerFunc(deviceHandler.UpdateTelnetCheck)))
+		// Item 3.5: per-device CPU/memory alert thresholds + history graph.
+		mux.Handle("PUT /api/v1/devices/{id}/host-metrics-thresholds", authHandler.Middleware(http.HandlerFunc(deviceHandler.UpdateHostMetricsThresholds)))
+		mux.Handle("GET /api/v1/devices/{id}/host-metrics/history-range", authHandler.Middleware(hostmetrics.HistoryAPI{Metrics: metricsdb.Repository{DB: db}}))
 		mux.Handle("PUT /api/v1/devices/{id}/pause", authHandler.Middleware(http.HandlerFunc(deviceHandler.UpdateEnabled)))
 		mux.Handle("PUT /api/v1/devices/pause-bulk", authHandler.Middleware(http.HandlerFunc(deviceHandler.UpdateEnabledBulk)))
 		mux.Handle("POST /api/v1/devices/", authHandler.Middleware(http.HandlerFunc(discoveryHandler.Discover)))
@@ -829,6 +844,8 @@ func main() {
 		mux.HandleFunc("PUT /api/v1/devices/{id}/push-check", unavailable)
 		mux.HandleFunc("PUT /api/v1/devices/{id}/ssh-check", unavailable)
 		mux.HandleFunc("PUT /api/v1/devices/{id}/telnet-check", unavailable)
+		mux.HandleFunc("PUT /api/v1/devices/{id}/host-metrics-thresholds", unavailable)
+		mux.HandleFunc("GET /api/v1/devices/{id}/host-metrics/history-range", unavailable)
 		mux.HandleFunc("PUT /api/v1/devices/{id}/pause", unavailable)
 		mux.HandleFunc("PUT /api/v1/devices/pause-bulk", unavailable)
 		mux.HandleFunc("GET /api/v1/dns/", unavailable)
