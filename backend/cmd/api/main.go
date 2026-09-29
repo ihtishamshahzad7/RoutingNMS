@@ -131,6 +131,7 @@ func main() {
 	var incidentStream *incidents.Stream
 	var alertEvaluator *alerts.Evaluator
 	var authHandler auth.Handler
+	var eventsRepo events.Repository
 	if db != nil {
 		profiles := olt.DefaultProfileRegistry()
 		config := olt.ConfigService{DB: db, Profiles: profiles}
@@ -166,7 +167,7 @@ func main() {
 		// (syslog classification below, and the device/interface transition
 		// scan started further down) funnels through, so dedup is applied
 		// consistently regardless of source.
-		eventsRepo := events.Repository{
+		eventsRepo = events.Repository{
 			DedupWindow: time.Duration(envInt("EVENTS_DEDUP_WINDOW_SECONDS", 60)) * time.Second,
 		}
 		eventsRepo.DB = db
