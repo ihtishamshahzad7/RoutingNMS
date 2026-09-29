@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { FormEvent, useEffect, useState } from "react";
+import { useParams, useSearchParams } from "next/navigation";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { ApiError, apiFetch } from "../../../../lib/api";
 import { MetricChart } from "../../../../components/metric-chart";
 
@@ -24,8 +24,16 @@ const ORG="tenant-1";
 const card="rounded-2xl border border-slate-800 bg-slate-900 p-5";
 
 export default function DeviceDetailsPage(){
+  const searchParams = useSearchParams();
+  const highlightIfIndex = searchParams.get("highlight");
+  const highlightedRowRef = useRef<HTMLTableRowElement | null>(null);
  const params=useParams<{id:string}>(); const id=params.id;
  const [device,setDevice]=useState<Device|null>(null),[interfaces,setInterfaces]=useState<Interface[]>([]),[loading,setLoading]=useState(true),[discovering,setDiscovering]=useState(false),[message,setMessage]=useState("");
+  useEffect(() => {
+    if (highlightIfIndex && highlightedRowRef.current) {
+      highlightedRowRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [highlightIfIndex, interfaces]);
  const [templates,setTemplates]=useState<ProvTemplate[]>([]),[preview,setPreview]=useState<Preview|null>(null),[provSaving,setProvSaving]=useState(false),[provLoading,setProvLoading]=useState(false),[provError,setProvError]=useState("");
  const [pingState,setPingState]=useState<{live:PingLive|null;probing:boolean;pingError:string}>({live:null,probing:false,pingError:""});
  async function loadPing(){try{const live=await apiFetch<PingLive>(`/ping/${id}/live`);setPingState(s=>({...s,live,pingError:""}))}catch(e){setPingState(s=>({...s,live:null,pingError:e instanceof ApiError?e.message:"Unable to load ping status."}))}}
@@ -281,7 +289,7 @@ export default function DeviceDetailsPage(){
  </section>}
  <ConfigBackupsSection device={device} />
  <BadgesSection device={device} />
- <section className={card}><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">Interface inventory</h2><p className="mt-1 text-xs text-slate-500">IF-MIB data discovered from the device and persisted in PostgreSQL.</p></div><button onClick={load} className="rounded-lg border border-slate-700 px-3 py-2 text-xs hover:bg-slate-800">Refresh</button></div><div className="mt-5 overflow-x-auto"><table className="w-full min-w-[900px] text-left text-sm"><thead className="border-b border-slate-800 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-3 py-3">Index</th><th>Name</th><th>Description</th><th>Admin</th><th>Oper</th><th>In errors</th><th>Out errors</th><th>Last discovery</th></tr></thead><tbody>{interfaces.length?interfaces.map(x=><tr key={x.id} className="border-b border-slate-800/70"><td className="px-3 py-3 text-slate-500">{x.ifIndex}</td><td className="font-medium">{x.name||"—"}</td><td className="text-slate-400">{x.description||"—"}</td><td><span className={x.adminUp?"text-emerald-400":"text-slate-500"}>{x.adminUp?"UP":"DOWN"}</span></td><td><span className={x.operUp?"text-emerald-400":"text-red-400"}>{x.operUp?"UP":"DOWN"}</span></td><td>{x.inErrors}</td><td>{x.outErrors}</td><td className="text-xs text-slate-500">{x.lastDiscoveredAt?new Date(x.lastDiscoveredAt).toLocaleString():"—"}</td></tr>):<tr><td colSpan={8} className="py-12 text-center text-slate-500">No interface inventory yet. Click <b>Run SNMP Discovery</b> to discover and save interfaces.</td></tr>}</tbody></table></div> </section></main>
+ <section className={card}><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">Interface inventory</h2><p className="mt-1 text-xs text-slate-500">IF-MIB data discovered from the device and persisted in PostgreSQL.</p></div><button onClick={load} className="rounded-lg border border-slate-700 px-3 py-2 text-xs hover:bg-slate-800">Refresh</button></div><div className="mt-5 overflow-x-auto"><table className="w-full min-w-[900px] text-left text-sm"><thead className="border-b border-slate-800 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-3 py-3">Index</th><th>Name</th><th>Description</th><th>Admin</th><th>Oper</th><th>In errors</th><th>Out errors</th><th>Last discovery</th></tr></thead><tbody>{interfaces.length?interfaces.map(x=><tr key={x.id} id={`interface-${x.ifIndex}`} ref={(highlightIfIndex&&(x.name===highlightIfIndex||String(x.ifIndex)===highlightIfIndex||`if${x.ifIndex}`===highlightIfIndex))?highlightedRowRef:undefined} className={`border-b border-slate-800/70 transition-colors duration-1000 ${(highlightIfIndex&&(x.name===highlightIfIndex||String(x.ifIndex)===highlightIfIndex||`if${x.ifIndex}`===highlightIfIndex))?"bg-amber-500/20":""}`}><td className="px-3 py-3 text-slate-500">{x.ifIndex}</td><td className="font-medium">{x.name||"—"}</td><td className="text-slate-400">{x.description||"—"}</td><td><span className={x.adminUp?"text-emerald-400":"text-slate-500"}>{x.adminUp?"UP":"DOWN"}</span></td><td><span className={x.operUp?"text-emerald-400":"text-red-400"}>{x.operUp?"UP":"DOWN"}</span></td><td>{x.inErrors}</td><td>{x.outErrors}</td><td className="text-xs text-slate-500">{x.lastDiscoveredAt?new Date(x.lastDiscoveredAt).toLocaleString():"—"}</td></tr>):<tr><td colSpan={8} className="py-12 text-center text-slate-500">No interface inventory yet. Click <b>Run SNMP Discovery</b> to discover and save interfaces.</td></tr>}</tbody></table></div> </section></main>
 }
 
 /** Feature 1.6 (Config Backup): version history of this device's own

@@ -8,11 +8,14 @@ import (
 	"time"
 )
 
-// Record is the JSON shape returned by GET /api/v1/events.
+// Record is the JSON shape returned by GET /api/v1/events. DeviceID/GroupID
+// are serialized as strings, not numbers, to match every other device-
+// scoped endpoint in this API (e.g. GET /devices' Record.ID is a string) --
+// callers join events to a device/group by string id.
 type Record struct {
 	ID         int64     `json:"id"`
-	DeviceID   *int64    `json:"deviceId,omitempty"`
-	GroupID    *int64    `json:"groupId,omitempty"`
+	DeviceID   *string   `json:"deviceId,omitempty"`
+	GroupID    *string   `json:"groupId,omitempty"`
 	EventType  string    `json:"eventType"`
 	Severity   string    `json:"severity"`
 	Message    string    `json:"message"`
@@ -130,8 +133,14 @@ func (a API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "failed to read events rows", http.StatusInternalServerError)
 			return
 		}
-		rec.DeviceID = deviceID
-		rec.GroupID = groupID
+		if deviceID != nil {
+			s := strconv.FormatInt(*deviceID, 10)
+			rec.DeviceID = &s
+		}
+		if groupID != nil {
+			s := strconv.FormatInt(*groupID, 10)
+			rec.GroupID = &s
+		}
 		items = append(items, rec)
 	}
 

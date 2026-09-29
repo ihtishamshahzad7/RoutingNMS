@@ -218,7 +218,7 @@ func parseRFC5424(m *Message, rest string, receivedAt time.Time) {
 
 	// A leading UTF-8 BOM (EF BB BF) on the MSG field is explicitly allowed
 	// by RFC 5424 section 6.4 and isn't part of the message text.
-	rest = strings.TrimPrefix(rest, "﻿")
+	rest = strings.TrimPrefix(rest, "\xEF\xBB\xBF")
 	// If nothing survives (MSG was empty/whitespace-only), leave m.Body as
 	// the full original line (already set by Parse) rather than storing
 	// blank. A literal "-" (RFC 5424's nil-MSG marker) is kept as-is.
