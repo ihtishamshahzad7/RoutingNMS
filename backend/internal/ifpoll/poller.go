@@ -3,9 +3,11 @@ package ifpoll
 import (
 	"context"
 	"log"
+	"strconv"
 	"sync"
 	"time"
 
+	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/metricsdb"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/pollpool"
 	"github.com/ihtishamshahzad7/RoutingNMS/backend/internal/snmp"
 )
@@ -23,6 +25,7 @@ import (
 // requirement for this sub-item.
 type Poller struct {
 	repo     Repository
+	metrics  metricsdb.Repository
 	collector snmp.Collector
 	walk     WalkFunc
 
@@ -30,9 +33,12 @@ type Poller struct {
 	nextDue map[string]time.Time
 }
 
-// New builds a poller; walk defaults to walkInterfaces.
-func New(repo Repository) *Poller {
-	return &Poller{repo: repo, walk: walkInterfaces, nextDue: map[string]time.Time{}}
+// New builds a poller; walk defaults to walkInterfaces. metrics is where
+// each cycle's per-port rate/up-down samples are recorded (item 3.4:
+// per-port history graphs on the device detail page); a failed write there
+// is logged and otherwise ignored, same as the ping/portcheck pollers.
+func New(repo Repository, metrics metricsdb.Repository) *Poller {
+	return &Poller{repo: repo, metrics: metrics, walk: walkInterfaces, nextDue: map[string]time.Time{}}
 }
 
 // SetWalk overrides the SNMP walk function (used by tests).
@@ -113,7 +119,51 @@ func (p *Poller) pollDevice(ctx context.Context, d EnabledDevice) {
 		prior = map[int64]PriorPort{}
 	}
 
-	if err := p.repo.SavePoll(ctx, d.ID, ports, prior, now); err != nil {
+	ids, err := p.repo.SavePoll(ctx, d.ID, ports, prior, now)
+	if err != nil {
 		log.Printf("ifpoll poller: save poll device=%s: %v", d.ID, err)
+		return
+	}
+
+	// Item 3.4: record this cycle's per-port rate/up-down as metric_samples
+	// (subjectType "interface", subjectId = the port's stable interfaces.id
+	// from SavePoll above), so the device detail page's per-port history
+	// view can chart it with the same GET /api/v1/metrics machinery used
+	// everywhere else. In/out rate samples are only recorded when this
+	// cycle actually computed a rate (i.e. not the port's first-ever poll,
+	// and no counter-width rollover) -- a missing sample reads as "no data
+	// point here" to the chart, which is correct; a synthetic 0 would read
+	// as "zero traffic", which would be wrong.
+	samples := make([]metricsdb.Sample, 0, len(ports)*3)
+	for _, p2 := range ports {
+		id, ok := ids[p2.IfIndex]
+		if !ok {
+			continue
+		}
+		subjectID := strconv.FormatInt(id, 10)
+		operUp := 0.0
+		if p2.OperUp {
+			operUp = 1
+		}
+		samples = append(samples, metricsdb.Sample{
+			SubjectType: "interface", SubjectID: subjectID, TenantID: d.OrganizationID,
+			MetricName: "if_oper_up", Value: operUp, RecordedAt: now,
+		})
+
+		prev, hadPrior := prior[p2.IfIndex]
+		if !hadPrior || prev.CounterWidth != p2.CounterWidth {
+			continue
+		}
+		if v, ok := computeRate(prev.InOctets, prev.SampledAt, p2.InOctets, now, p2.CounterWidth); ok {
+			samples = append(samples, metricsdb.Sample{SubjectType: "interface", SubjectID: subjectID, TenantID: d.OrganizationID, MetricName: "if_in_rate_bps", Value: v, RecordedAt: now})
+		}
+		if v, ok := computeRate(prev.OutOctets, prev.SampledAt, p2.OutOctets, now, p2.CounterWidth); ok {
+			samples = append(samples, metricsdb.Sample{SubjectType: "interface", SubjectID: subjectID, TenantID: d.OrganizationID, MetricName: "if_out_rate_bps", Value: v, RecordedAt: now})
+		}
+	}
+	if len(samples) > 0 {
+		if err := p.metrics.RecordBatch(ctx, samples); err != nil {
+			log.Printf("ifpoll poller: record metric samples device=%s: %v", d.ID, err)
+		}
 	}
 }

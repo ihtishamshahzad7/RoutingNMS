@@ -2,9 +2,21 @@
 
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
+import { RotateCw } from "lucide-react";
 import { ApiError, apiFetch } from "../../../../lib/api";
 import { MetricChart } from "../../../../components/metric-chart";
+import { EngPanel, EngButton, EngModal, ENG } from "../../../../components/ui/engineer";
+import { HeartbeatBar, type Beat } from "../../dashboard/HeartbeatBar";
+import { aggregate, type RawPoint } from "../../../../lib/monitoring-aggregate";
+
+// Item 3.4 (per-port history graphs): the Ports section below and its
+// history modal reuse the exact same building blocks as the Connectivity
+// Monitoring detail page's charts (frontend/app/(noc)/icmp-monitoring/[id]/
+// page.tsx) -- HeartbeatBar for the up/down strip and lib/monitoring-
+// aggregate's aggregate() for the 1h/24h/7d bucketing -- rather than
+// rebuilding either, per the standing "reuse, don't rebuild" instruction.
 
 type CertChainLink={certType:string;subject:string;issuer:string;validFrom:string;validTo:string;fingerprintSha256:string};
 type CertInfo={subject:string;issuer:string;validFrom:string;validTo:string;fingerprintSha256:string;daysRemaining:number;chain:CertChainLink[]};
@@ -13,7 +25,149 @@ type DNSLive={live:{resolved:boolean;answers?:string[];latencyMs:number;expected
 type ReachLive={live:{reachable:boolean;banner?:string;latencyMs:number;bannerMatched?:boolean|null;error?:string}};
 type ProvTemplate={id:number;name:string;scriptBody:string};
 type Preview={renderedScript:string;password:string;fetchCommand:string};
-type Interface={id:number;deviceId:string;ifIndex:number;name:string;description:string;adminUp:boolean;operUp:boolean;inOctets:number;outOctets:number;inErrors:number;outErrors:number;lastDiscoveredAt?:string};
+type Interface={id:number;deviceId:string;ifIndex:number;name:string;description:string;adminUp:boolean;operUp:boolean;inOctets:number;outOctets:number;inErrors:number;outErrors:number;lastDiscoveredAt?:string;speedBps?:number;counterWidth?:number;inRateBps?:number|null;outRateBps?:number|null;lastTransitionAt?:string;snmpReachable?:boolean;snmpLastSuccessAt?:string;snmpLastError?:string};
+
+// Item 3.4: per-port history point (GET /api/v1/interfaces/{id}/history-range).
+type PortHistoryPoint={probedAt:string;inRateBps?:number|null;outRateBps?:number|null;operUp:boolean};
+type PortRange="1h"|"24h"|"7d";
+const PORT_RANGES:{key:PortRange;label:string}[]=[{key:"1h",label:"1h"},{key:"24h",label:"24h"},{key:"7d",label:"7d"}];
+
+type PortStatus="up"|"down"|"admin-down";
+function portStatus(x:Interface):PortStatus{ if(!x.adminUp) return "admin-down"; return x.operUp?"up":"down"; }
+const PORT_STATUS_COLOR:Record<PortStatus,string>={up:ENG.up,down:ENG.down,"admin-down":"#8A96A3"};
+const PORT_STATUS_LABEL:Record<PortStatus,string>={up:"Up",down:"Down","admin-down":"Admin down"};
+// Down ports first (the thing an engineer needs to see), then admin-down
+// (intentionally disabled, not an active problem), then up -- matches the
+// Events page's severity-first ordering convention.
+const PORT_RANK:Record<PortStatus,number>={down:0,"admin-down":1,up:2};
+
+function formatBps(v?:number|null):string{
+  if(v==null) return "—";
+  if(v>=1_000_000_000) return `${(v/1_000_000_000).toFixed(2)} Gbps`;
+  if(v>=1_000_000) return `${(v/1_000_000).toFixed(2)} Mbps`;
+  if(v>=1_000) return `${(v/1_000).toFixed(1)} Kbps`;
+  return `${v.toFixed(0)} bps`;
+}
+
+/** Per-port history view (item 3.4): in/out traffic charts + an up/down
+ * strip, reusing the same 1h/24h/7d range selector, aggregate() bucketing,
+ * and HeartbeatBar already built for ICMP and Port/Service checks. */
+function PortHistoryModal({ port, onClose }: { port: Interface; onClose: () => void }) {
+  const [range, setRange] = useState<PortRange>("24h");
+  const [history, setHistory] = useState<PortHistoryPoint[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const loadHistory = useCallback(() => {
+    let active = true;
+    setLoading(true);
+    apiFetch<{ history: PortHistoryPoint[] }>(`/interfaces/${port.id}/history-range?range=${range}`)
+      .then((r) => { if (active) { setHistory(r.history); setError(""); } })
+      .catch((e) => { if (active) setError(e instanceof ApiError ? e.message : "Unable to load port history."); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [port.id, range]);
+
+  useEffect(() => loadHistory(), [loadHistory]);
+
+  const inAgg = useMemo(
+    () => aggregate(history.map((p): RawPoint => ({ t: new Date(p.probedAt).getTime(), latencyMs: p.inRateBps ?? null, reachable: p.operUp })), range),
+    [history, range]
+  );
+  const outAgg = useMemo(
+    () => aggregate(history.map((p): RawPoint => ({ t: new Date(p.probedAt).getTime(), latencyMs: p.outRateBps ?? null, reachable: p.operUp })), range),
+    [history, range]
+  );
+  const beats: Beat[] = useMemo(() => history.map((p) => ({ reachable: p.operUp, probedAt: p.probedAt })), [history]);
+
+  const axisCommon = {
+    stroke: "#5C6B7A",
+    tick: { fontSize: 10, fill: "#5C6B7A" },
+    axisLine: { stroke: "#DCE1E8" },
+    tickLine: { stroke: "#DCE1E8" },
+  };
+
+  return (
+    <EngModal
+      title={`${port.name || `Interface ${port.ifIndex}`} · history`}
+      subtitle={port.description || undefined}
+      onClose={onClose}
+      footer={<EngButton onClick={onClose}>Close</EngButton>}
+    >
+      <div className="mb-3 flex justify-end">
+        <div className="flex rounded-[4px] border border-[#DCE1E8] bg-white p-0.5">
+          {PORT_RANGES.map((r) => (
+            <button
+              key={r.key}
+              onClick={() => setRange(r.key)}
+              className={`rounded-[3px] px-3 py-1 text-[12px] font-medium transition-colors duration-150 ${
+                range === r.key ? "bg-[#2E7BF6] text-white" : "text-[#5C6B7A] hover:bg-[#F4F6F9]"
+              }`}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {loading ? (
+        <div className="py-10 text-center text-[13px] text-[#8A96A3]">Loading…</div>
+      ) : error ? (
+        <div className="flex flex-col items-center gap-2 py-10 text-center">
+          <span className="text-[13px] text-[#C4362D]">{error}</span>
+          <button
+            onClick={loadHistory}
+            className="inline-flex items-center gap-1.5 rounded-[4px] border border-[#DCE1E8] bg-white px-3 py-1.5 text-[12px] font-medium text-[#1F2A37] hover:bg-[#F4F6F9]"
+          >
+            <RotateCw size={12} /> Retry
+          </button>
+        </div>
+      ) : history.length === 0 ? (
+        <div className="py-10 text-center text-[13px] text-[#8A96A3]">No history in this range yet.</div>
+      ) : (
+        <>
+          <div className="mb-4">
+            <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#5C6B7A]">In traffic</div>
+            <ResponsiveContainer width="100%" height={140}>
+              <LineChart data={inAgg.map((p) => ({ t: p.t, v: p.avgLatencyMs }))}>
+                <CartesianGrid stroke="#EEF1F4" vertical={false} />
+                <XAxis dataKey="t" type="number" domain={["dataMin", "dataMax"]} tickFormatter={(t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} {...axisCommon} />
+                <YAxis width={56} tickFormatter={(v) => formatBps(v)} {...axisCommon} />
+                <Tooltip
+                  contentStyle={{ background: "#FFFFFF", border: "1px solid #DCE1E8", borderRadius: 4, fontSize: 12, fontFamily: "inherit" }}
+                  labelFormatter={(t) => new Date(t as number).toLocaleString()}
+                  formatter={(v) => [formatBps(v as number), "In"]}
+                />
+                <Line type="monotone" dataKey="v" stroke="#2E7BF6" strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="mb-4">
+            <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#5C6B7A]">Out traffic</div>
+            <ResponsiveContainer width="100%" height={140}>
+              <LineChart data={outAgg.map((p) => ({ t: p.t, v: p.avgLatencyMs }))}>
+                <CartesianGrid stroke="#EEF1F4" vertical={false} />
+                <XAxis dataKey="t" type="number" domain={["dataMin", "dataMax"]} tickFormatter={(t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} {...axisCommon} />
+                <YAxis width={56} tickFormatter={(v) => formatBps(v)} {...axisCommon} />
+                <Tooltip
+                  contentStyle={{ background: "#FFFFFF", border: "1px solid #DCE1E8", borderRadius: 4, fontSize: 12, fontFamily: "inherit" }}
+                  labelFormatter={(t) => new Date(t as number).toLocaleString()}
+                  formatter={(v) => [formatBps(v as number), "Out"]}
+                />
+                <Line type="monotone" dataKey="v" stroke="#1E8E5A" strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+          <div>
+            <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-[#5C6B7A]">Up / down</div>
+            <div className="overflow-x-auto py-1">
+              <HeartbeatBar beats={beats} height={24} />
+            </div>
+          </div>
+        </>
+      )}
+    </EngModal>
+  );
+}
 type PingResult={id:number;deviceId:string;probedAt:string;rttMs?:number|null;jitterMs?:number|null;lossPct:number;ttl?:number|null;isReachable:boolean};
 type PingLive={live?:{address?:string;reachable:boolean;rttMs?:number;jitterMs?:number;lossPct?:number;ttl?:number;error?:string};history:PingResult[]};
 type Tag={id:number;name:string;color:string};
@@ -29,6 +183,20 @@ export default function DeviceDetailsPage(){
   const highlightedRowRef = useRef<HTMLTableRowElement | null>(null);
  const params=useParams<{id:string}>(); const id=params.id;
  const [device,setDevice]=useState<Device|null>(null),[interfaces,setInterfaces]=useState<Interface[]>([]),[loading,setLoading]=useState(true),[discovering,setDiscovering]=useState(false),[message,setMessage]=useState("");
+  const [portsLoading, setPortsLoading] = useState(true);
+  const [portsError, setPortsError] = useState("");
+  const [historyPort, setHistoryPort] = useState<Interface | null>(null);
+  async function loadInterfaces() {
+    setPortsLoading(true);
+    setPortsError("");
+    try {
+      setInterfaces(await apiFetch<Interface[]>(`/devices/${id}/interfaces`));
+    } catch (e) {
+      setPortsError(e instanceof ApiError ? e.message : "Unable to load port data.");
+    } finally {
+      setPortsLoading(false);
+    }
+  }
   useEffect(() => {
     if (highlightIfIndex && highlightedRowRef.current) {
       highlightedRowRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -38,7 +206,7 @@ export default function DeviceDetailsPage(){
  const [pingState,setPingState]=useState<{live:PingLive|null;probing:boolean;pingError:string}>({live:null,probing:false,pingError:""});
  async function loadPing(){try{const live=await apiFetch<PingLive>(`/ping/${id}/live`);setPingState(s=>({...s,live,pingError:""}))}catch(e){setPingState(s=>({...s,live:null,pingError:e instanceof ApiError?e.message:"Unable to load ping status."}))}}
  async function pingNow(){setPingState(s=>({...s,probing:true,pingError:""}));try{await apiFetch(`/ping/${id}/probe`,{method:"POST"});await loadPing()}catch(e){setPingState(s=>({...s,probing:false,pingError:e instanceof ApiError?e.message:"Ping probe failed."}))}finally{setPingState(s=>({...s,probing:false}))}}
- async function load(){setLoading(true);try{const devices=await apiFetch<Device[]>(`/devices?organizationId=${ORG}`);const d=devices.find(x=>x.id===id);if(!d)throw new Error("Device not found");setDevice(d);setInterfaces(await apiFetch<Interface[]>(`/devices/${id}/interfaces`))}catch(e){setMessage(e instanceof ApiError?e.message:e instanceof Error?e.message:"Unable to load device")}finally{setLoading(false)}}
+ async function load(){setLoading(true);try{const devices=await apiFetch<Device[]>(`/devices?organizationId=${ORG}`);const d=devices.find(x=>x.id===id);if(!d)throw new Error("Device not found");setDevice(d);await loadInterfaces()}catch(e){setMessage(e instanceof ApiError?e.message:e instanceof Error?e.message:"Unable to load device")}finally{setLoading(false)}}
  async function togglePause(){if(!device)return;try{const updated=await apiFetch<Device>(`/devices/${device.id}/pause`,{method:"PUT",body:JSON.stringify({enabled:!device.enabled})});setDevice(updated);setMessage(updated.enabled?"Resumed — monitoring is active again.":"Paused — monitoring and alerting stopped, configuration kept.")}catch(e){setMessage(e instanceof ApiError?e.message:"Failed to update device state.")}}
  useEffect(()=>{load()},[id]);
  useEffect(()=>{apiFetch<ProvTemplate[]>("/provisioning/templates").then(setTemplates).catch(()=>{})},[]);
@@ -289,7 +457,86 @@ export default function DeviceDetailsPage(){
  </section>}
  <ConfigBackupsSection device={device} />
  <BadgesSection device={device} />
- <section className={card}><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">Interface inventory</h2><p className="mt-1 text-xs text-slate-500">IF-MIB data discovered from the device and persisted in PostgreSQL.</p></div><button onClick={load} className="rounded-lg border border-slate-700 px-3 py-2 text-xs hover:bg-slate-800">Refresh</button></div><div className="mt-5 overflow-x-auto"><table className="w-full min-w-[900px] text-left text-sm"><thead className="border-b border-slate-800 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-3 py-3">Index</th><th>Name</th><th>Description</th><th>Admin</th><th>Oper</th><th>In errors</th><th>Out errors</th><th>Last discovery</th></tr></thead><tbody>{interfaces.length?interfaces.map(x=><tr key={x.id} id={`interface-${x.ifIndex}`} ref={(highlightIfIndex&&(x.name===highlightIfIndex||String(x.ifIndex)===highlightIfIndex||`if${x.ifIndex}`===highlightIfIndex))?highlightedRowRef:undefined} className={`border-b border-slate-800/70 transition-colors duration-1000 ${(highlightIfIndex&&(x.name===highlightIfIndex||String(x.ifIndex)===highlightIfIndex||`if${x.ifIndex}`===highlightIfIndex))?"bg-amber-500/20":""}`}><td className="px-3 py-3 text-slate-500">{x.ifIndex}</td><td className="font-medium">{x.name||"—"}</td><td className="text-slate-400">{x.description||"—"}</td><td><span className={x.adminUp?"text-emerald-400":"text-slate-500"}>{x.adminUp?"UP":"DOWN"}</span></td><td><span className={x.operUp?"text-emerald-400":"text-red-400"}>{x.operUp?"UP":"DOWN"}</span></td><td>{x.inErrors}</td><td>{x.outErrors}</td><td className="text-xs text-slate-500">{x.lastDiscoveredAt?new Date(x.lastDiscoveredAt).toLocaleString():"—"}</td></tr>):<tr><td colSpan={8} className="py-12 text-center text-slate-500">No interface inventory yet. Click <b>Run SNMP Discovery</b> to discover and save interfaces.</td></tr>}</tbody></table></div> </section></main>
+ {device.snmpEnabled && (() => {
+   const sortedPorts = [...interfaces].sort((a, b) => {
+     const ra = PORT_RANK[portStatus(a)], rb = PORT_RANK[portStatus(b)];
+     if (ra !== rb) return ra - rb;
+     return (a.name || `if${a.ifIndex}`).localeCompare(b.name || `if${b.ifIndex}`);
+   });
+   return (
+     <EngPanel
+       title={`Ports (${interfaces.length})`}
+       actions={<EngButton onClick={loadInterfaces}><RotateCw size={13} /> Refresh</EngButton>}
+       className="mt-6"
+     >
+       <p className="mb-3 -mt-1 text-[11px] text-[#8A96A3]">IF-MIB data discovered from the device and persisted in PostgreSQL. Click a port for its traffic and up/down history.</p>
+       {portsLoading ? (
+         <div className="animate-pulse space-y-2">
+           {Array.from({ length: 5 }).map((_, i) => (
+             <div key={i} className="h-9 rounded-[3px] bg-[#EEF1F4]" />
+           ))}
+         </div>
+       ) : portsError ? (
+         <div className="flex flex-col items-center gap-2 py-10 text-center">
+           <span className="text-[13px] text-[#C4362D]">{portsError}</span>
+           <button
+             onClick={loadInterfaces}
+             className="inline-flex items-center gap-1.5 rounded-[4px] border border-[#DCE1E8] bg-white px-3 py-1.5 text-[12px] font-medium text-[#1F2A37] hover:bg-[#F4F6F9]"
+           >
+             <RotateCw size={12} /> Retry
+           </button>
+         </div>
+       ) : sortedPorts.length === 0 ? (
+         <div className="py-10 text-center text-[13px] text-[#8A96A3]">No SNMP interface data yet.</div>
+       ) : (
+         <div className="overflow-x-auto">
+           <table className="w-full min-w-[820px] text-left text-[13px]">
+             <thead className="border-b border-[#DCE1E8] text-[11px] uppercase tracking-wide text-[#8A96A3]">
+               <tr>
+                 <th className="py-2 pl-2 font-medium">Port</th>
+                 <th className="font-medium">Admin</th>
+                 <th className="font-medium">Oper</th>
+                 <th className="font-medium">Speed</th>
+                 <th className="font-medium">In</th>
+                 <th className="font-medium">Out</th>
+                 <th className="font-medium">Last transition</th>
+               </tr>
+             </thead>
+             <tbody>
+               {sortedPorts.map((x) => {
+                 const status = portStatus(x);
+                 const matchesHighlight = !!highlightIfIndex && (x.name === highlightIfIndex || String(x.ifIndex) === highlightIfIndex || `if${x.ifIndex}` === highlightIfIndex);
+                 return (
+                   <tr
+                     key={x.id}
+                     id={`interface-${x.ifIndex}`}
+                     ref={matchesHighlight ? highlightedRowRef : undefined}
+                     onClick={() => setHistoryPort(x)}
+                     className={`cursor-pointer border-b border-[#EEF1F4] transition-colors duration-1000 hover:bg-[#F4F6F9] ${matchesHighlight ? "bg-amber-100" : ""}`}
+                   >
+                     <td className="py-2 pl-2">
+                       <span className="mr-2 inline-block h-2 w-2 rounded-full align-middle" style={{ background: PORT_STATUS_COLOR[status] }} />
+                       <span className="font-medium text-[#1F2A37]">{x.name || `if${x.ifIndex}`}</span>
+                       {x.description && <span className="ml-1 text-[#8A96A3]">· {x.description}</span>}
+                     </td>
+                     <td><span style={{ color: x.adminUp ? ENG.up : "#8A96A3" }}>{x.adminUp ? "Up" : "Down"}</span></td>
+                     <td><span style={{ color: PORT_STATUS_COLOR[status] }}>{PORT_STATUS_LABEL[status]}</span></td>
+                     <td className="font-mono text-[#5C6B7A]">{x.speedBps ? formatBps(x.speedBps) : "—"}</td>
+                     <td className="font-mono text-[#2E7BF6]">{formatBps(x.inRateBps)}</td>
+                     <td className="font-mono text-[#1E8E5A]">{formatBps(x.outRateBps)}</td>
+                     <td className="text-[#8A96A3]">{x.lastTransitionAt ? new Date(x.lastTransitionAt).toLocaleString() : "—"}</td>
+                   </tr>
+                 );
+               })}
+             </tbody>
+           </table>
+         </div>
+       )}
+     </EngPanel>
+   );
+ })()}
+ {historyPort && <PortHistoryModal port={historyPort} onClose={() => setHistoryPort(null)} />}
+ </main>
 }
 
 /** Feature 1.6 (Config Backup): version history of this device's own

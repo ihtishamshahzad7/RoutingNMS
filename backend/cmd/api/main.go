@@ -286,7 +286,7 @@ func main() {
 		// gates each device on its own if_poll_interval_seconds (default
 		// 60s) rather than re-polling every device on every global tick;
 		// IF_POLL_TICK_SECONDS (default 15s) is just the check granularity.
-		ifPoller := ifpoll.New(ifpoll.Repository{DB: db})
+		ifPoller := ifpoll.New(ifpoll.Repository{DB: db}, metricsdb.Repository{DB: db})
 		ifPollTick := time.Duration(envInt("IF_POLL_TICK_SECONDS", 15)) * time.Second
 		go ifPoller.Run(ctx, ifPollTick)
 
@@ -456,6 +456,11 @@ func main() {
 		// messages received yet." even with real data flowing in).
 		mux.Handle("GET /api/v1/syslog", authHandler.Middleware(syslog.API{DB: db}))
 		mux.Handle("GET /api/v1/events", authHandler.Middleware(events.API{Repo: eventsRepo}))
+
+		// Item 3.4 (per-port history graphs): GET /api/v1/interfaces/{id}/history-range,
+		// as called by the Ports section on frontend/app/(noc)/devices/[id]/page.tsx.
+		// {id} is the port's stable interfaces.id, not device_id/if_index.
+		mux.Handle("GET /api/v1/interfaces/", authHandler.Middleware(ifpoll.HistoryAPI{Metrics: metricsdb.Repository{DB: db}}))
 
 		// SNMP trap history + alert rule engine, as called by
 		// frontend/app/traps/page.tsx.
@@ -857,6 +862,7 @@ func main() {
 		mux.HandleFunc("GET /api/topology", unavailable)
 		mux.HandleFunc("GET /api/v1/syslog", unavailable)
 	mux.HandleFunc("GET /api/v1/events", unavailable)
+		mux.HandleFunc("GET /api/v1/interfaces/", unavailable)
 		mux.HandleFunc("GET /api/v1/traps/rules", unavailable)
 		mux.HandleFunc("POST /api/v1/traps/rules", unavailable)
 		mux.HandleFunc("DELETE /api/v1/traps/rules/{id}", unavailable)

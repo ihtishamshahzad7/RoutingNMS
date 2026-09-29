@@ -16,6 +16,7 @@ import (
 // batched into one query instead of one row at a time).
 type EnabledDevice struct {
 	ID              string
+	OrganizationID  string
 	Address         string
 	SNMPPort        uint16
 	Credentials     snmp.Credentials
@@ -45,7 +46,7 @@ func (r Repository) ListEnabled(ctx context.Context) ([]EnabledDevice, error) {
 	if r.DB == nil {
 		return nil, fmt.Errorf("ifpoll repository is not initialized")
 	}
-	rows, err := r.DB.Query(ctx, `SELECT id,address,COALESCE(snmp_port,161),snmp_version,COALESCE(snmp_community,''),COALESCE(snmp_username,''),COALESCE(snmp_auth_protocol,''),COALESCE(snmp_auth_password,''),COALESCE(snmp_priv_protocol,''),COALESCE(snmp_priv_password,''),COALESCE(snmp_timeout_ms,3000),COALESCE(if_poll_interval_seconds,60)
+	rows, err := r.DB.Query(ctx, `SELECT id,COALESCE(organization_id,''),address,COALESCE(snmp_port,161),snmp_version,COALESCE(snmp_community,''),COALESCE(snmp_username,''),COALESCE(snmp_auth_protocol,''),COALESCE(snmp_auth_password,''),COALESCE(snmp_priv_protocol,''),COALESCE(snmp_priv_password,''),COALESCE(snmp_timeout_ms,3000),COALESCE(if_poll_interval_seconds,60)
 		FROM devices WHERE enabled=true AND snmp_enabled=true ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -56,7 +57,7 @@ func (r Repository) ListEnabled(ctx context.Context) ([]EnabledDevice, error) {
 		var d EnabledDevice
 		var version string
 		var timeoutMS int
-		if err := rows.Scan(&d.ID, &d.Address, &d.SNMPPort, &version, &d.Credentials.Community, &d.Credentials.Username, &d.Credentials.AuthProto, &d.Credentials.AuthPass, &d.Credentials.PrivProto, &d.Credentials.PrivPass, &timeoutMS, &d.IntervalSeconds); err != nil {
+		if err := rows.Scan(&d.ID, &d.OrganizationID, &d.Address, &d.SNMPPort, &version, &d.Credentials.Community, &d.Credentials.Username, &d.Credentials.AuthProto, &d.Credentials.AuthPass, &d.Credentials.PrivProto, &d.Credentials.PrivPass, &timeoutMS, &d.IntervalSeconds); err != nil {
 			return nil, err
 		}
 		d.Credentials.Version = snmp.Version(version)
@@ -102,16 +103,22 @@ func (r Repository) PriorState(ctx context.Context, deviceID string) (map[int64]
 // changed since the prior poll -- current state is written every cycle (the
 // octet counters/rates need to stay fresh), but transition history stays
 // sparse.
-func (r Repository) SavePoll(ctx context.Context, deviceID string, ports []PortState, prior map[int64]PriorPort, now time.Time) error {
+//
+// Item 3.4 (per-port history graphs): returns each polled port's stable
+// interfaces.id (RETURNING id off the upsert, rather than a second SELECT)
+// keyed by if_index, so the caller can attach this cycle's rate/up-down
+// metric_samples to the right subject id without an extra round trip.
+func (r Repository) SavePoll(ctx context.Context, deviceID string, ports []PortState, prior map[int64]PriorPort, now time.Time) (map[int64]int64, error) {
 	if r.DB == nil {
-		return fmt.Errorf("ifpoll repository is not initialized")
+		return nil, fmt.Errorf("ifpoll repository is not initialized")
 	}
 	tx, err := r.DB.Begin(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer tx.Rollback(ctx)
 
+	ids := make(map[int64]int64, len(ports))
 	for _, p := range ports {
 		prev, hadPrior := prior[p.IfIndex]
 
@@ -133,7 +140,8 @@ func (r Repository) SavePoll(ctx context.Context, deviceID string, ports []PortS
 			lastTransitionAt = &t
 		}
 
-		_, err := tx.Exec(ctx, `INSERT INTO interfaces
+		var id int64
+		err := tx.QueryRow(ctx, `INSERT INTO interfaces
 				(device_id,if_index,name,description,admin_up,oper_up,in_octets,out_octets,in_errors,out_errors,
 				 if_speed_bps,counter_width,in_rate_bps,out_rate_bps,counter_sampled_at,last_transition_at,last_discovered_at)
 			VALUES ($1,$2,$3,$3,$4,$5,$6,$7,0,0,$8,$9,$10,$11,$12,COALESCE($13,(SELECT last_transition_at FROM interfaces WHERE device_id=$1 AND if_index=$2)),NOW())
@@ -145,17 +153,19 @@ func (r Repository) SavePoll(ctx context.Context, deviceID string, ports []PortS
 				in_rate_bps=EXCLUDED.in_rate_bps, out_rate_bps=EXCLUDED.out_rate_bps,
 				counter_sampled_at=EXCLUDED.counter_sampled_at,
 				last_transition_at=COALESCE(EXCLUDED.last_transition_at, interfaces.last_transition_at),
-				last_discovered_at=NOW()`,
+				last_discovered_at=NOW()
+			RETURNING id`,
 			deviceID, p.IfIndex, p.Description, p.AdminUp, p.OperUp, p.InOctets, p.OutOctets,
-			p.SpeedBps, p.CounterWidth, inRate, outRate, now, lastTransitionAt)
+			p.SpeedBps, p.CounterWidth, inRate, outRate, now, lastTransitionAt).Scan(&id)
 		if err != nil {
-			return fmt.Errorf("save interface %d: %w", p.IfIndex, err)
+			return nil, fmt.Errorf("save interface %d: %w", p.IfIndex, err)
 		}
+		ids[p.IfIndex] = id
 
 		if transitioned {
 			if _, err := tx.Exec(ctx, `INSERT INTO interface_transitions (device_id,if_index,oper_up,admin_up,changed_at) VALUES ($1,$2,$3,$4,$5)`,
 				deviceID, p.IfIndex, p.OperUp, p.AdminUp, now); err != nil {
-				return fmt.Errorf("record transition for %d: %w", p.IfIndex, err)
+				return nil, fmt.Errorf("record transition for %d: %w", p.IfIndex, err)
 			}
 		}
 	}
@@ -164,10 +174,13 @@ func (r Repository) SavePoll(ctx context.Context, deviceID string, ports []PortS
 		VALUES ($1,true,$2,$2,'')
 		ON CONFLICT (device_id) DO UPDATE SET reachable=true, last_attempt_at=EXCLUDED.last_attempt_at, last_success_at=EXCLUDED.last_success_at, last_error=''`,
 		deviceID, now); err != nil {
-		return fmt.Errorf("mark reachable: %w", err)
+		return nil, fmt.Errorf("mark reachable: %w", err)
 	}
 
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
 // MarkUnreachable records an SNMP poll failure for deviceID. It intentionally
