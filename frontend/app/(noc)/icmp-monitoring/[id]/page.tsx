@@ -35,6 +35,10 @@ type Device = {
   id: string; name: string; address: string;
   icmpEnabled: boolean;
   portCheckEnabled: boolean; portCheckProtocol: string; portCheckPort: number;
+  // Item 3.6: only used to tailor the Download Report modal's copy --
+  // buildReportData() re-fetches the device itself and decides on its own
+  // whether to include the SNMP sections.
+  snmpEnabled: boolean;
 };
 type ProbeResult = { probedAt: string; rttMs?: number | null; lossPct: number; isReachable: boolean };
 type PortHistoryPoint = { probedAt: string; latencyMs?: number | null; isReachable: boolean };
@@ -322,6 +326,7 @@ export default function ConnectivityMonitoringDetailPage() {
             The report lists overall uptime %, average latency/response time, and every up/down event for each
             configured check type. Time spent in an active maintenance window is excluded from downtime and the
             uptime % calculation.
+            {device?.snmpEnabled && " This device also has SNMP monitoring enabled, so the report also includes port up/down history and CPU/memory threshold alerts."}
           </p>
         </EngModal>
       )}

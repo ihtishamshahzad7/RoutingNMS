@@ -49,6 +49,66 @@ function formatBps(v?:number|null):string{
   return `${v.toFixed(0)} bps`;
 }
 
+// Item 3.6 polish pass: same chart skeleton / error+retry / range-aware
+// empty-state components as the Connectivity Monitoring detail page's 2.5
+// polish (frontend/app/(noc)/icmp-monitoring/[id]/page.tsx) -- ported
+// rather than re-invented, so a loading port/CPU/memory chart here looks
+// identical to a loading ICMP/Port-check chart there.
+const CHART_AXIS_TOKENS = {
+  stroke: "#5C6B7A",
+  tick: { fontSize: 11, fontWeight: 400, fill: "#5C6B7A" },
+  axisLine: { stroke: "#DCE1E8" },
+  tickLine: { stroke: "#DCE1E8" },
+};
+const CHART_TOOLTIP_STYLE = { background: "#FFFFFF", border: "1px solid #DCE1E8", borderRadius: 4, fontSize: 12, fontFamily: "inherit" };
+const CHART_TOOLTIP_LABEL_STYLE = { color: "#1F2A37", fontWeight: 500 };
+const CHART_TOOLTIP_ITEM_STYLE = { color: "#1F2A37" };
+
+function ChartSkeleton() {
+  return (
+    <div className="flex h-[140px] animate-pulse items-end gap-1 px-2 pb-4">
+      {[38, 62, 45, 70, 52, 80, 58, 40, 66, 48, 72, 55, 44, 68, 50].map((h, i) => (
+        <div key={i} className="flex-1 rounded-t-[2px] bg-[#EEF1F4]" style={{ height: `${h}%` }} />
+      ))}
+    </div>
+  );
+}
+
+function HeartbeatSkeleton() {
+  return (
+    <div className="flex animate-pulse items-end gap-[2px] py-1" style={{ height: 24 }}>
+      {Array.from({ length: 50 }).map((_, i) => (
+        <span key={i} className="w-[3px] shrink-0 rounded-[1px] bg-[#EEF1F4]" style={{ height: "100%" }} />
+      ))}
+    </div>
+  );
+}
+
+function ChartErrorBlock({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="flex flex-col items-center gap-2 py-10 text-center">
+      <span className="text-[13px] text-[#C4362D]">{message}</span>
+      <button
+        onClick={onRetry}
+        className="inline-flex items-center gap-1.5 rounded-[4px] border border-[#DCE1E8] bg-white px-3 py-1.5 text-[12px] font-medium text-[#1F2A37] hover:bg-[#F4F6F9]"
+      >
+        <RotateCw size={12} /> Retry
+      </button>
+    </div>
+  );
+}
+
+/** Distinguishes "this device/port has no history at all yet" (1h view) from
+ * "nothing in this particular range" (24h/7d) -- same copy and range logic
+ * as the Connectivity Monitoring detail page's 2.5 polish. */
+function ChartEmptyBlock({ range }: { range: PortRange }) {
+  return (
+    <div className="py-10 text-center text-[13px] text-[#8A96A3]">
+      {range === "1h" ? "No data yet — first results appear within one check interval." : "No data in this range — try a shorter range, or check back later."}
+    </div>
+  );
+}
+
 /** Per-port history view (item 3.4): in/out traffic charts + an up/down
  * strip, reusing the same 1h/24h/7d range selector, aggregate() bucketing,
  * and HeartbeatBar already built for ICMP and Port/Service checks. */
@@ -80,13 +140,6 @@ function PortHistoryModal({ port, onClose }: { port: Interface; onClose: () => v
   );
   const beats: Beat[] = useMemo(() => history.map((p) => ({ reachable: p.operUp, probedAt: p.probedAt })), [history]);
 
-  const axisCommon = {
-    stroke: "#5C6B7A",
-    tick: { fontSize: 10, fill: "#5C6B7A" },
-    axisLine: { stroke: "#DCE1E8" },
-    tickLine: { stroke: "#DCE1E8" },
-  };
-
   return (
     <EngModal
       title={`${port.name || `Interface ${port.ifIndex}`} · history`}
@@ -110,19 +163,15 @@ function PortHistoryModal({ port, onClose }: { port: Interface; onClose: () => v
         </div>
       </div>
       {loading ? (
-        <div className="py-10 text-center text-[13px] text-[#8A96A3]">Loading…</div>
+        <>
+          <ChartSkeleton />
+          <div className="my-4"><ChartSkeleton /></div>
+          <HeartbeatSkeleton />
+        </>
       ) : error ? (
-        <div className="flex flex-col items-center gap-2 py-10 text-center">
-          <span className="text-[13px] text-[#C4362D]">{error}</span>
-          <button
-            onClick={loadHistory}
-            className="inline-flex items-center gap-1.5 rounded-[4px] border border-[#DCE1E8] bg-white px-3 py-1.5 text-[12px] font-medium text-[#1F2A37] hover:bg-[#F4F6F9]"
-          >
-            <RotateCw size={12} /> Retry
-          </button>
-        </div>
+        <ChartErrorBlock message={error} onRetry={loadHistory} />
       ) : history.length === 0 ? (
-        <div className="py-10 text-center text-[13px] text-[#8A96A3]">No history in this range yet.</div>
+        <ChartEmptyBlock range={range} />
       ) : (
         <>
           <div className="mb-4">
@@ -130,10 +179,12 @@ function PortHistoryModal({ port, onClose }: { port: Interface; onClose: () => v
             <ResponsiveContainer width="100%" height={140}>
               <LineChart data={inAgg.map((p) => ({ t: p.t, v: p.avgLatencyMs }))}>
                 <CartesianGrid stroke="#EEF1F4" vertical={false} />
-                <XAxis dataKey="t" type="number" domain={["dataMin", "dataMax"]} tickFormatter={(t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} {...axisCommon} />
-                <YAxis width={56} tickFormatter={(v) => formatBps(v)} {...axisCommon} />
+                <XAxis dataKey="t" type="number" domain={["dataMin", "dataMax"]} tickFormatter={(t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} {...CHART_AXIS_TOKENS} />
+                <YAxis width={56} tickFormatter={(v) => formatBps(v)} {...CHART_AXIS_TOKENS} />
                 <Tooltip
-                  contentStyle={{ background: "#FFFFFF", border: "1px solid #DCE1E8", borderRadius: 4, fontSize: 12, fontFamily: "inherit" }}
+                  contentStyle={CHART_TOOLTIP_STYLE}
+                  labelStyle={CHART_TOOLTIP_LABEL_STYLE}
+                  itemStyle={CHART_TOOLTIP_ITEM_STYLE}
                   labelFormatter={(t) => new Date(t as number).toLocaleString()}
                   formatter={(v) => [formatBps(v as number), "In"]}
                 />
@@ -146,10 +197,12 @@ function PortHistoryModal({ port, onClose }: { port: Interface; onClose: () => v
             <ResponsiveContainer width="100%" height={140}>
               <LineChart data={outAgg.map((p) => ({ t: p.t, v: p.avgLatencyMs }))}>
                 <CartesianGrid stroke="#EEF1F4" vertical={false} />
-                <XAxis dataKey="t" type="number" domain={["dataMin", "dataMax"]} tickFormatter={(t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} {...axisCommon} />
-                <YAxis width={56} tickFormatter={(v) => formatBps(v)} {...axisCommon} />
+                <XAxis dataKey="t" type="number" domain={["dataMin", "dataMax"]} tickFormatter={(t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} {...CHART_AXIS_TOKENS} />
+                <YAxis width={56} tickFormatter={(v) => formatBps(v)} {...CHART_AXIS_TOKENS} />
                 <Tooltip
-                  contentStyle={{ background: "#FFFFFF", border: "1px solid #DCE1E8", borderRadius: 4, fontSize: 12, fontFamily: "inherit" }}
+                  contentStyle={CHART_TOOLTIP_STYLE}
+                  labelStyle={CHART_TOOLTIP_LABEL_STYLE}
+                  itemStyle={CHART_TOOLTIP_ITEM_STYLE}
                   labelFormatter={(t) => new Date(t as number).toLocaleString()}
                   formatter={(v) => [formatBps(v as number), "Out"]}
                 />
@@ -213,12 +266,6 @@ function HostMetricsPanel({ device, onDeviceUpdate }: { device: Device; onDevice
     [history, range]
   );
 
-  const axisCommon = {
-    stroke: "#5C6B7A",
-    tick: { fontSize: 10, fill: "#5C6B7A" },
-    axisLine: { stroke: "#DCE1E8" },
-    tickLine: { stroke: "#DCE1E8" },
-  };
   const fmtPct = (v?: number | null) => (v == null ? "—" : `${v.toFixed(1)}%`);
 
   async function saveThresholds(e: FormEvent<HTMLFormElement>) {
@@ -272,19 +319,14 @@ function HostMetricsPanel({ device, onDeviceUpdate }: { device: Device; onDevice
         </div>
       </div>
       {loading ? (
-        <div className="py-10 text-center text-[13px] text-[#8A96A3]">Loading…</div>
+        <>
+          <ChartSkeleton />
+          <div className="mt-4"><ChartSkeleton /></div>
+        </>
       ) : error ? (
-        <div className="flex flex-col items-center gap-2 py-10 text-center">
-          <span className="text-[13px] text-[#C4362D]">{error}</span>
-          <button
-            onClick={loadHistory}
-            className="inline-flex items-center gap-1.5 rounded-[4px] border border-[#DCE1E8] bg-white px-3 py-1.5 text-[12px] font-medium text-[#1F2A37] hover:bg-[#F4F6F9]"
-          >
-            <RotateCw size={12} /> Retry
-          </button>
-        </div>
+        <ChartErrorBlock message={error} onRetry={loadHistory} />
       ) : history.length === 0 ? (
-        <div className="py-10 text-center text-[13px] text-[#8A96A3]">No CPU/memory history in this range yet.</div>
+        <ChartEmptyBlock range={range} />
       ) : (
         <>
           <div className="mb-4">
@@ -292,10 +334,12 @@ function HostMetricsPanel({ device, onDeviceUpdate }: { device: Device; onDevice
             <ResponsiveContainer width="100%" height={140}>
               <LineChart data={cpuAgg.map((p) => ({ t: p.t, v: p.avgLatencyMs }))}>
                 <CartesianGrid stroke="#EEF1F4" vertical={false} />
-                <XAxis dataKey="t" type="number" domain={["dataMin", "dataMax"]} tickFormatter={(t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} {...axisCommon} />
-                <YAxis width={44} domain={[0, 100]} tickFormatter={(v) => `${v}%`} {...axisCommon} />
+                <XAxis dataKey="t" type="number" domain={["dataMin", "dataMax"]} tickFormatter={(t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} {...CHART_AXIS_TOKENS} />
+                <YAxis width={44} domain={[0, 100]} tickFormatter={(v) => `${v}%`} {...CHART_AXIS_TOKENS} />
                 <Tooltip
-                  contentStyle={{ background: "#FFFFFF", border: "1px solid #DCE1E8", borderRadius: 4, fontSize: 12, fontFamily: "inherit" }}
+                  contentStyle={CHART_TOOLTIP_STYLE}
+                  labelStyle={CHART_TOOLTIP_LABEL_STYLE}
+                  itemStyle={CHART_TOOLTIP_ITEM_STYLE}
                   labelFormatter={(t) => new Date(t as number).toLocaleString()}
                   formatter={(v) => [fmtPct(v as number), "CPU"]}
                 />
@@ -308,10 +352,12 @@ function HostMetricsPanel({ device, onDeviceUpdate }: { device: Device; onDevice
             <ResponsiveContainer width="100%" height={140}>
               <LineChart data={memAgg.map((p) => ({ t: p.t, v: p.avgLatencyMs }))}>
                 <CartesianGrid stroke="#EEF1F4" vertical={false} />
-                <XAxis dataKey="t" type="number" domain={["dataMin", "dataMax"]} tickFormatter={(t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} {...axisCommon} />
-                <YAxis width={44} domain={[0, 100]} tickFormatter={(v) => `${v}%`} {...axisCommon} />
+                <XAxis dataKey="t" type="number" domain={["dataMin", "dataMax"]} tickFormatter={(t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} {...CHART_AXIS_TOKENS} />
+                <YAxis width={44} domain={[0, 100]} tickFormatter={(v) => `${v}%`} {...CHART_AXIS_TOKENS} />
                 <Tooltip
-                  contentStyle={{ background: "#FFFFFF", border: "1px solid #DCE1E8", borderRadius: 4, fontSize: 12, fontFamily: "inherit" }}
+                  contentStyle={CHART_TOOLTIP_STYLE}
+                  labelStyle={CHART_TOOLTIP_LABEL_STYLE}
+                  itemStyle={CHART_TOOLTIP_ITEM_STYLE}
                   labelFormatter={(t) => new Date(t as number).toLocaleString()}
                   formatter={(v) => [fmtPct(v as number), "Memory"]}
                 />

@@ -38,18 +38,34 @@ func (a HistoryAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var window time.Duration
-	switch r.URL.Query().Get("range") {
-	case "1h":
-		window = time.Hour
-	case "7d":
-		window = 7 * 24 * time.Hour
-	default:
-		window = 24 * time.Hour
-	}
-
 	ctx := r.Context()
-	series, err := a.Metrics.Query(ctx, "interface", id, []string{"if_oper_up", "if_in_rate_bps", "if_out_rate_bps"}, window)
+	var series []metricsdb.Series
+	var err error
+	// Explicit ?from=&to= (RFC3339) wins over the range preset -- same
+	// pattern item 2.4 added to ping/portcheck's history-range endpoints,
+	// extended here (item 3.6) so the Download Report PDF can include port
+	// up/down history for an arbitrary past date range on SNMP-enabled
+	// devices, not just a 1h/24h/7d window ending "now".
+	if fromStr, toStr := r.URL.Query().Get("from"), r.URL.Query().Get("to"); fromStr != "" && toStr != "" {
+		from, err1 := time.Parse(time.RFC3339, fromStr)
+		to, err2 := time.Parse(time.RFC3339, toStr)
+		if err1 != nil || err2 != nil {
+			http.Error(w, "from/to must be RFC3339 timestamps", http.StatusBadRequest)
+			return
+		}
+		series, err = a.Metrics.QueryBetween(ctx, "interface", id, []string{"if_oper_up", "if_in_rate_bps", "if_out_rate_bps"}, from, to)
+	} else {
+		var window time.Duration
+		switch r.URL.Query().Get("range") {
+		case "1h":
+			window = time.Hour
+		case "7d":
+			window = 7 * 24 * time.Hour
+		default:
+			window = 24 * time.Hour
+		}
+		series, err = a.Metrics.Query(ctx, "interface", id, []string{"if_oper_up", "if_in_rate_bps", "if_out_rate_bps"}, window)
+	}
 	if err != nil {
 		http.Error(w, "failed to load port history", http.StatusInternalServerError)
 		return

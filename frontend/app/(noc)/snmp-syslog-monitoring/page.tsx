@@ -67,6 +67,16 @@ const EVENT_TYPE_LABEL: Record<string, string> = {
   auth_failure: "Authentication failure",
   device_reboot: "Device reboot",
   syslog: "Syslog message",
+  // Item 3.5's CPU/memory threshold-crossing events (internal/events/
+  // scan.go's scanHostMetric) were never added here when 3.5 landed --
+  // 3.6 polish pass fix: without an entry they fell back to the raw
+  // "high_cpu"/"cpu_normal"/... eventType string instead of a readable
+  // label, and were missing from the event-type filter dropdown below
+  // (EVENT_TYPES is derived from this map's keys).
+  high_cpu: "High CPU",
+  cpu_normal: "CPU back to normal",
+  high_memory: "High memory",
+  memory_normal: "Memory back to normal",
 };
 
 const interfaceRe = /interface\s+(\S+)\s+is\s+(up|down)/i;
@@ -152,7 +162,7 @@ function StatCard({ label, value, color, icon }: { label: string; value: number;
         {icon}
       </span>
       <div className="min-w-0">
-        <div className="text-[22px] font-semibold leading-none" style={{ color }}>
+        <div className="text-[22px] font-medium leading-none" style={{ color }}>
           {value > 999 ? "999+" : value}
         </div>
         <div className="mt-1 text-[11px] font-medium uppercase tracking-wide text-[#5C6B7A]">{label}</div>
@@ -380,7 +390,7 @@ export default function EventsPage() {
             {ev.count > 1 && (
               <span
                 title={`First seen ${fullTimestamp(ev.firstSeen)}\nLast seen ${fullTimestamp(ev.lastSeen)}`}
-                className="inline-flex items-center rounded-[3px] bg-[#F4F6F9] px-1.5 py-[1px] text-[10px] font-semibold text-[#5C6B7A]"
+                className="inline-flex items-center rounded-[3px] bg-[#F4F6F9] px-1.5 py-[1px] text-[10px] font-medium text-[#5C6B7A]"
               >
                 ×{ev.count}
               </span>
@@ -390,7 +400,7 @@ export default function EventsPage() {
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <span
-            className="rounded-[3px] px-1.5 py-[1px] text-[10px] font-semibold uppercase tracking-wide"
+            className="rounded-[3px] px-1.5 py-[1px] text-[10px] font-medium uppercase tracking-wide"
             style={{ color: SEV_COLOR[ev.severity], background: `${SEV_COLOR[ev.severity]}1A` }}
           >
             {SEV_LABEL[ev.severity]}

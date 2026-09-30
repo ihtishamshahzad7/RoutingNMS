@@ -39,18 +39,33 @@ func (a HistoryAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var window time.Duration
-	switch r.URL.Query().Get("range") {
-	case "1h":
-		window = time.Hour
-	case "7d":
-		window = 7 * 24 * time.Hour
-	default:
-		window = 24 * time.Hour
-	}
-
 	ctx := r.Context()
-	series, err := a.Metrics.Query(ctx, "device", id, []string{"cpu_percent", "memory_percent"}, window)
+	var series []metricsdb.Series
+	var err error
+	// Explicit ?from=&to= (RFC3339) wins over the range preset -- same
+	// pattern item 2.4 added to ping/portcheck, extended here (item 3.6) so
+	// the Download Report PDF can include CPU/memory history/threshold
+	// events for an arbitrary past date range on SNMP-enabled devices.
+	if fromStr, toStr := r.URL.Query().Get("from"), r.URL.Query().Get("to"); fromStr != "" && toStr != "" {
+		from, err1 := time.Parse(time.RFC3339, fromStr)
+		to, err2 := time.Parse(time.RFC3339, toStr)
+		if err1 != nil || err2 != nil {
+			http.Error(w, "from/to must be RFC3339 timestamps", http.StatusBadRequest)
+			return
+		}
+		series, err = a.Metrics.QueryBetween(ctx, "device", id, []string{"cpu_percent", "memory_percent"}, from, to)
+	} else {
+		var window time.Duration
+		switch r.URL.Query().Get("range") {
+		case "1h":
+			window = time.Hour
+		case "7d":
+			window = 7 * 24 * time.Hour
+		default:
+			window = 24 * time.Hour
+		}
+		series, err = a.Metrics.Query(ctx, "device", id, []string{"cpu_percent", "memory_percent"}, window)
+	}
 	if err != nil {
 		http.Error(w, "failed to load host metrics history", http.StatusInternalServerError)
 		return
